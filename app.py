@@ -41,6 +41,8 @@ def init_auth_state():
         st.session_state.authenticated = False
     if 'user_email' not in st.session_state:
         st.session_state.user_email = None
+    if 'user_role' not in st.session_state:
+        st.session_state.user_role = None
     if 'access_token' not in st.session_state:
         st.session_state.access_token = None
 
@@ -64,6 +66,11 @@ def login(email: str, password: str) -> bool:
             st.session_state.authenticated = True
             st.session_state.user_email = data['user']['email']
             st.session_state.access_token = data['access_token']
+            
+            # Rolle aus user_metadata auslesen (Default: 'user')
+            user_metadata = data['user'].get('user_metadata', {})
+            st.session_state.user_role = user_metadata.get('role', 'user')
+            
             return True
         else:
             return False
@@ -75,7 +82,12 @@ def logout():
     """Loggt User aus"""
     st.session_state.authenticated = False
     st.session_state.user_email = None
+    st.session_state.user_role = None
     st.session_state.access_token = None
+
+def is_admin() -> bool:
+    """Prüft ob der aktuelle User Admin-Rechte hat"""
+    return st.session_state.get('user_role') == 'admin'
 
 def show_login_page():
     """Zeigt Login-Seite"""
@@ -696,7 +708,9 @@ def show_main_app():
     with header_col1:
         st.title("📊 Private Equity Fund Analyzer")
     with header_col2:
-        st.markdown(f"👤 **{st.session_state.user_email}**")
+        role_badge = "🔑 Admin" if is_admin() else "👤 User"
+        st.markdown(f"{role_badge}")
+        st.caption(st.session_state.user_email)
         if st.button("Abmelden", use_container_width=True):
             logout()
             st.rerun()
@@ -827,7 +841,12 @@ def show_main_app():
             elif date_mode == "Quartal" and selected_reporting_date:
                 fund_reporting_dates = {fid: selected_reporting_date for fid in selected_fund_ids}
             
-            tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Charts", "📈 Vergleichstabelle", "🏢 Portfoliounternehmen", "📋 Details", "⚙️ Admin"])
+            # Tabs basierend auf Rolle erstellen
+            if is_admin():
+                tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Charts", "📈 Vergleichstabelle", "🏢 Portfoliounternehmen", "📋 Details", "⚙️ Admin"])
+            else:
+                tab1, tab2, tab3, tab4 = st.tabs(["📊 Charts", "📈 Vergleichstabelle", "🏢 Portfoliounternehmen", "📋 Details"])
+                tab5 = None  # Kein Admin-Tab für normale User
             
             # TAB 1: CHARTS
             with tab1:
@@ -1093,9 +1112,10 @@ def show_main_app():
                                 st.info("Keine historischen Daten vorhanden.")
                             st.markdown("---")
             
-            # TAB 5: ADMIN
-            with tab5:
-                st.header("⚙️ Fund & GP Management")
+            # TAB 5: ADMIN (nur für Admins sichtbar)
+            if is_admin() and tab5 is not None:
+                with tab5:
+                    st.header("⚙️ Fund & GP Management")
                 
                 # Stichtag-Verwaltung
                 with st.expander("📅 Stichtage verwalten", expanded=False):
@@ -1221,8 +1241,762 @@ def show_main_app():
                     
                     uploaded_file = st.file_uploader("Excel-Datei hochladen", type=['xlsx'], key="excel_upload")
                     
-                    if uploaded_file:
-                        st.info("📤 Excel-Datei wurde hochgeladen. Die Import-Funktionalität verwendet PostgreSQL-Syntax.")
+                    # Session State für Import-Workflow
+                    if 'import_preview' not in st.session_state:
+                        st.session_state.import_preview = None
+                    if 'import_data' not in st.session_state:
+                        st.session_state.import_data = None
+                    
+                    if uploaded_file and st.button("🔍 Vorschau & Änderungen prüfen", type="secondary", key="preview_btn"):
+                        try:
+                            # Excel komplett einlesen
+                            uploaded_file.seek(0)
+                            raw_df = pd.read_excel(uploaded_file, header=None)
+                            
+                            # GP-Daten aus Zeile 1-2
+                            gp_header = [str(h).strip() if pd.notna(h) else '' for h in raw_df.iloc[0]]
+                            gp_values = raw_df.iloc[1]
+                            
+                            # GP-Spalten-Mapping
+                            gp_col_map = {}
+                            for i, header in enumerate(gp_header):
+                                header_lower = header.lower()
+                                if 'gp name' in header_lower or header_lower == 'gp':
+                                    gp_col_map['gp_name'] = i
+                                elif 'strategy' in header_lower:
+                                    gp_col_map['strategy'] = i
+                                elif 'rating' in header_lower:
+                                    gp_col_map['rating'] = i
+                                elif 'sektor' in header_lower or 'sector' in header_lower:
+                                    gp_col_map['sector'] = i
+                                elif 'headquarters' in header_lower or 'hq' in header_lower:
+                                    gp_col_map['headquarters'] = i
+                                elif 'website' in header_lower:
+                                    gp_col_map['website'] = i
+                                elif 'last meeting' in header_lower:
+                                    gp_col_map['last_meeting'] = i
+                                elif 'next raise' in header_lower:
+                                    gp_col_map['next_raise_estimate'] = i
+                                elif 'kontakt1 name' in header_lower or 'kontaktperson 1 name' in header_lower:
+                                    gp_col_map['contact1_name'] = i
+                                elif 'kontakt1 funktion' in header_lower or 'kontaktperson 1 funktion' in header_lower:
+                                    gp_col_map['contact1_function'] = i
+                                elif 'kontakt1 e-mail' in header_lower or 'kontaktperson 1 e-mail' in header_lower:
+                                    gp_col_map['contact1_email'] = i
+                                elif 'kontakt1 telefon' in header_lower or 'kontaktperson 1 telefon' in header_lower:
+                                    gp_col_map['contact1_phone'] = i
+                                elif 'kontakt2 name' in header_lower or 'kontaktperson 2 name' in header_lower:
+                                    gp_col_map['contact2_name'] = i
+                                elif 'kontakt2 funktion' in header_lower or 'kontaktperson 2 funktion' in header_lower:
+                                    gp_col_map['contact2_function'] = i
+                                elif 'kontakt2 e-mail' in header_lower or 'kontaktperson 2 e-mail' in header_lower:
+                                    gp_col_map['contact2_email'] = i
+                                elif 'kontakt2 telefon' in header_lower or 'kontaktperson 2 telefon' in header_lower:
+                                    gp_col_map['contact2_phone'] = i
+                            
+                            # GP-Werte extrahieren
+                            def get_gp_val(key):
+                                if key in gp_col_map:
+                                    val = gp_values.iloc[gp_col_map[key]]
+                                    if pd.notna(val) and str(val).strip() != '':
+                                        return str(val).strip()
+                                return None
+                            
+                            gp_data = {
+                                'gp_name': get_gp_val('gp_name'),
+                                'strategy': get_gp_val('strategy'),
+                                'rating': get_gp_val('rating'),
+                                'sector': get_gp_val('sector'),
+                                'headquarters': get_gp_val('headquarters'),
+                                'website': get_gp_val('website'),
+                                'last_meeting': get_gp_val('last_meeting'),
+                                'next_raise_estimate': get_gp_val('next_raise_estimate'),
+                                'contact1_name': get_gp_val('contact1_name'),
+                                'contact1_function': get_gp_val('contact1_function'),
+                                'contact1_email': get_gp_val('contact1_email'),
+                                'contact1_phone': get_gp_val('contact1_phone'),
+                                'contact2_name': get_gp_val('contact2_name'),
+                                'contact2_function': get_gp_val('contact2_function'),
+                                'contact2_email': get_gp_val('contact2_email'),
+                                'contact2_phone': get_gp_val('contact2_phone'),
+                            }
+                            
+                            if not gp_data['gp_name']:
+                                st.error("❌ GP Name nicht gefunden in Zeile 2!")
+                                st.stop()
+                            
+                            # Fund/Portfolio-Daten ab Zeile 4
+                            fund_header = [str(h).strip() if pd.notna(h) else '' for h in raw_df.iloc[3]]
+                            
+                            # Fund-Spalten-Mapping
+                            fund_col_map = {}
+                            for i, header in enumerate(fund_header):
+                                header_lower = header.lower()
+                                if 'fund name' in header_lower or header_lower == 'fund':
+                                    fund_col_map['fund_name'] = i
+                                elif 'stichtag' in header_lower or 'reporting date' in header_lower:
+                                    fund_col_map['reporting_date'] = i
+                                elif 'vintage' in header_lower:
+                                    fund_col_map['vintage_year'] = i
+                                elif 'fund size' in header_lower or 'size' in header_lower:
+                                    fund_col_map['fund_size_m'] = i
+                                elif 'currency' in header_lower or 'währung' in header_lower:
+                                    fund_col_map['currency'] = i
+                                elif 'geography' in header_lower or 'geograph' in header_lower:
+                                    fund_col_map['geography'] = i
+                                elif 'portfolio company' in header_lower or 'company' in header_lower:
+                                    fund_col_map['company_name'] = i
+                                elif 'investment date' in header_lower or 'investitionsdatum' in header_lower:
+                                    fund_col_map['investment_date'] = i
+                                elif 'exit date' in header_lower or 'exitdatum' in header_lower:
+                                    fund_col_map['exit_date'] = i
+                                elif 'ownership' in header_lower:
+                                    fund_col_map['ownership'] = i
+                                elif 'investiert' in header_lower or 'invested' in header_lower:
+                                    fund_col_map['invested_amount'] = i
+                                elif 'unrealisiert' in header_lower or 'unrealized' in header_lower:
+                                    fund_col_map['unrealized_tvpi'] = i
+                                elif 'realisiert' in header_lower or 'realized' in header_lower:
+                                    fund_col_map['realized_tvpi'] = i
+                                elif 'entry' in header_lower and ('multiple' in header_lower or 'ebitda' in header_lower):
+                                    fund_col_map['entry_multiple'] = i
+                                elif 'gross irr' in header_lower or 'irr' in header_lower:
+                                    fund_col_map['gross_irr'] = i
+                            
+                            # Hilfsfunktion für Datumsparsen
+                            def parse_date(val):
+                                if pd.isna(val) or val == '' or val is None:
+                                    return None
+                                try:
+                                    if isinstance(val, (datetime, date)):
+                                        return val.strftime('%Y-%m-%d')
+                                    val_str = str(val).strip()
+                                    if len(val_str) == 7:  # YYYY-MM
+                                        return f"{val_str}-01"
+                                    return pd.to_datetime(val_str).strftime('%Y-%m-%d')
+                                except:
+                                    return None
+                            
+                            # Fund/Portfolio-Daten extrahieren
+                            funds_data = {}
+                            
+                            for row_idx in range(4, len(raw_df)):
+                                row = raw_df.iloc[row_idx]
+                                
+                                fund_name = None
+                                if 'fund_name' in fund_col_map:
+                                    val = row.iloc[fund_col_map['fund_name']]
+                                    if pd.notna(val) and str(val).strip():
+                                        fund_name = str(val).strip()
+                                
+                                if not fund_name:
+                                    continue
+                                
+                                if fund_name not in funds_data:
+                                    funds_data[fund_name] = {
+                                        'metadata': {},
+                                        'companies': []
+                                    }
+                                
+                                for field in ['vintage_year', 'fund_size_m', 'currency', 'geography', 'reporting_date']:
+                                    if field in fund_col_map:
+                                        val = row.iloc[fund_col_map[field]]
+                                        if pd.notna(val) and str(val).strip():
+                                            if field == 'vintage_year':
+                                                try:
+                                                    funds_data[fund_name]['metadata'][field] = int(float(val))
+                                                except:
+                                                    pass
+                                            elif field == 'fund_size_m':
+                                                try:
+                                                    funds_data[fund_name]['metadata'][field] = float(val)
+                                                except:
+                                                    pass
+                                            elif field == 'reporting_date':
+                                                funds_data[fund_name]['metadata'][field] = parse_date(val)
+                                            else:
+                                                funds_data[fund_name]['metadata'][field] = str(val).strip()
+                                
+                                company_name = None
+                                if 'company_name' in fund_col_map:
+                                    val = row.iloc[fund_col_map['company_name']]
+                                    if pd.notna(val) and str(val).strip():
+                                        company_name = str(val).strip()
+                                
+                                if company_name:
+                                    company_data = {'company_name': company_name}
+                                    
+                                    for field in ['investment_date', 'exit_date', 'ownership', 'invested_amount', 
+                                                 'realized_tvpi', 'unrealized_tvpi', 'entry_multiple', 'gross_irr']:
+                                        if field in fund_col_map:
+                                            val = row.iloc[fund_col_map[field]]
+                                            if pd.notna(val) and str(val).strip() != '':
+                                                if field in ['investment_date', 'exit_date']:
+                                                    company_data[field] = parse_date(val)
+                                                elif field in ['ownership', 'gross_irr']:
+                                                    try:
+                                                        company_data[field] = float(val) * 100
+                                                    except:
+                                                        pass
+                                                elif field in ['invested_amount', 'realized_tvpi', 
+                                                              'unrealized_tvpi', 'entry_multiple']:
+                                                    try:
+                                                        company_data[field] = float(val)
+                                                    except:
+                                                        pass
+                                    
+                                    funds_data[fund_name]['companies'].append(company_data)
+                            
+                            # Änderungen ermitteln
+                            changes = {'gp': [], 'funds': {}, 'companies': {}}
+                            
+                            with conn.cursor() as cursor:
+                                # GP-Änderungen prüfen
+                                cursor.execute("SELECT * FROM gps WHERE gp_name = %s", (gp_data['gp_name'],))
+                                existing_gp = cursor.fetchone()
+                                gp_columns = [desc[0] for desc in cursor.description] if existing_gp else []
+                                
+                                if existing_gp:
+                                    gp_dict = dict(zip(gp_columns, existing_gp))
+                                    for field, new_val in gp_data.items():
+                                        if new_val is not None and field in gp_dict:
+                                            old_val = gp_dict.get(field)
+                                            if old_val != new_val and str(old_val) != str(new_val):
+                                                changes['gp'].append({
+                                                    'field': field,
+                                                    'old': old_val,
+                                                    'new': new_val
+                                                })
+                                
+                                # Fund- und Company-Änderungen prüfen
+                                for fund_name, fund_info in funds_data.items():
+                                    reporting_date = fund_info['metadata'].get('reporting_date')
+                                    if not reporting_date:
+                                        st.warning(f"⚠️ Kein Stichtag für Fund '{fund_name}' - wird übersprungen")
+                                        continue
+                                    
+                                    cursor.execute("SELECT * FROM funds WHERE fund_name = %s", (fund_name,))
+                                    existing_fund = cursor.fetchone()
+                                    fund_columns = [desc[0] for desc in cursor.description] if existing_fund else []
+                                    
+                                    changes['funds'][fund_name] = []
+                                    if existing_fund:
+                                        fund_dict = dict(zip(fund_columns, existing_fund))
+                                        if gp_data.get('strategy'):
+                                            old_strategy = fund_dict.get('strategy')
+                                            new_strategy = gp_data['strategy']
+                                            if old_strategy != new_strategy and str(old_strategy) != str(new_strategy):
+                                                changes['funds'][fund_name].append({
+                                                    'field': 'strategy',
+                                                    'old': old_strategy,
+                                                    'new': new_strategy
+                                                })
+                                        
+                                        for field in ['vintage_year', 'fund_size_m', 'currency', 'geography']:
+                                            new_val = fund_info['metadata'].get(field)
+                                            if new_val is not None:
+                                                old_val = fund_dict.get(field)
+                                                if old_val != new_val and str(old_val) != str(new_val):
+                                                    changes['funds'][fund_name].append({
+                                                        'field': field,
+                                                        'old': old_val,
+                                                        'new': new_val
+                                                    })
+                                    
+                                    changes['companies'][fund_name] = {}
+                                    for company in fund_info['companies']:
+                                        company_name = company['company_name']
+                                        
+                                        cursor.execute("""
+                                        SELECT * FROM portfolio_companies_history 
+                                        WHERE fund_id = (SELECT fund_id FROM funds WHERE fund_name = %s)
+                                        AND company_name = %s AND reporting_date = %s
+                                        """, (fund_name, company_name, reporting_date))
+                                        existing_company = cursor.fetchone()
+                                        company_columns = [desc[0] for desc in cursor.description] if existing_company else []
+                                        
+                                        changes['companies'][fund_name][company_name] = []
+                                        if existing_company:
+                                            company_dict = dict(zip(company_columns, existing_company))
+                                            for field in ['investment_date', 'exit_date', 'ownership', 'invested_amount',
+                                                         'realized_tvpi', 'unrealized_tvpi', 'entry_multiple', 'gross_irr']:
+                                                new_val = company.get(field)
+                                                if new_val is not None:
+                                                    old_val = company_dict.get(field)
+                                                    if old_val != new_val and str(old_val) != str(new_val):
+                                                        changes['companies'][fund_name][company_name].append({
+                                                            'field': field,
+                                                            'old': old_val,
+                                                            'new': new_val
+                                                        })
+                            
+                            st.session_state.import_data = {
+                                'gp_data': gp_data,
+                                'funds_data': funds_data,
+                                'changes': changes
+                            }
+                            st.session_state.import_preview = True
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"❌ Fehler beim Lesen: {e}")
+                            import traceback
+                            st.code(traceback.format_exc())
+                    
+                    # Vorschau anzeigen
+                    if st.session_state.import_preview and st.session_state.import_data:
+                        data = st.session_state.import_data
+                        changes = data['changes']
+                        
+                        st.markdown("---")
+                        st.subheader("📋 Import-Vorschau")
+                        
+                        st.markdown(f"**GP:** {data['gp_data']['gp_name']}")
+                        
+                        fund_names = list(data['funds_data'].keys())
+                        total_companies = sum(len(f['companies']) for f in data['funds_data'].values())
+                        st.markdown(f"**Fonds:** {len(fund_names)} | **Portfolio Companies:** {total_companies}")
+                        
+                        if 'selected_changes' not in st.session_state:
+                            st.session_state.selected_changes = {
+                                'gp': {},
+                                'funds': {},
+                                'companies': {}
+                            }
+                        
+                        has_changes = False
+                        change_count = 0
+                        
+                        if changes['gp']:
+                            has_changes = True
+                            st.markdown("#### 🔄 GP-Änderungen")
+                            for idx, ch in enumerate(changes['gp']):
+                                key = f"gp_{ch['field']}"
+                                if key not in st.session_state.selected_changes['gp']:
+                                    st.session_state.selected_changes['gp'][key] = True
+                                
+                                col1, col2 = st.columns([0.05, 0.95])
+                                with col1:
+                                    st.session_state.selected_changes['gp'][key] = st.checkbox(
+                                        "", value=st.session_state.selected_changes['gp'][key],
+                                        key=f"cb_gp_{idx}", label_visibility="collapsed"
+                                    )
+                                with col2:
+                                    status = "✅" if st.session_state.selected_changes['gp'][key] else "⏸️"
+                                    st.markdown(f"{status} **{ch['field']}:** `{ch['old']}` → `{ch['new']}`")
+                                change_count += 1
+                        
+                        for fund_name, fund_changes in changes['funds'].items():
+                            if fund_changes:
+                                has_changes = True
+                                st.markdown(f"#### 🔄 Fund '{fund_name}' - Änderungen")
+                                
+                                if fund_name not in st.session_state.selected_changes['funds']:
+                                    st.session_state.selected_changes['funds'][fund_name] = {}
+                                
+                                for idx, ch in enumerate(fund_changes):
+                                    key = f"{fund_name}_{ch['field']}"
+                                    if key not in st.session_state.selected_changes['funds'][fund_name]:
+                                        st.session_state.selected_changes['funds'][fund_name][key] = True
+                                    
+                                    col1, col2 = st.columns([0.05, 0.95])
+                                    with col1:
+                                        st.session_state.selected_changes['funds'][fund_name][key] = st.checkbox(
+                                            "", value=st.session_state.selected_changes['funds'][fund_name][key],
+                                            key=f"cb_fund_{fund_name}_{idx}", label_visibility="collapsed"
+                                        )
+                                    with col2:
+                                        status = "✅" if st.session_state.selected_changes['funds'][fund_name][key] else "⏸️"
+                                        st.markdown(f"{status} **{ch['field']}:** `{ch['old']}` → `{ch['new']}`")
+                                    change_count += 1
+                        
+                        for fund_name, companies in changes['companies'].items():
+                            for company_name, company_changes in companies.items():
+                                if company_changes:
+                                    has_changes = True
+                                    st.markdown(f"#### 🔄 '{company_name}' ({fund_name})")
+                                    
+                                    comp_key = f"{fund_name}_{company_name}"
+                                    if comp_key not in st.session_state.selected_changes['companies']:
+                                        st.session_state.selected_changes['companies'][comp_key] = {}
+                                    
+                                    for idx, ch in enumerate(company_changes):
+                                        key = f"{comp_key}_{ch['field']}"
+                                        if key not in st.session_state.selected_changes['companies'][comp_key]:
+                                            st.session_state.selected_changes['companies'][comp_key][key] = True
+                                        
+                                        col1, col2 = st.columns([0.05, 0.95])
+                                        with col1:
+                                            st.session_state.selected_changes['companies'][comp_key][key] = st.checkbox(
+                                                "", value=st.session_state.selected_changes['companies'][comp_key][key],
+                                                key=f"cb_comp_{comp_key}_{idx}", label_visibility="collapsed"
+                                            )
+                                        with col2:
+                                            status = "✅" if st.session_state.selected_changes['companies'][comp_key][key] else "⏸️"
+                                            st.markdown(f"{status} **{ch['field']}:** `{ch['old']}` → `{ch['new']}`")
+                                        change_count += 1
+                        
+                        if has_changes:
+                            st.markdown("---")
+                            col1, col2, col3 = st.columns([1, 1, 2])
+                            with col1:
+                                if st.button("✅ Alle auswählen", key="select_all_changes"):
+                                    for key in st.session_state.selected_changes['gp']:
+                                        st.session_state.selected_changes['gp'][key] = True
+                                    for fund in st.session_state.selected_changes['funds']:
+                                        for key in st.session_state.selected_changes['funds'][fund]:
+                                            st.session_state.selected_changes['funds'][fund][key] = True
+                                    for comp in st.session_state.selected_changes['companies']:
+                                        for key in st.session_state.selected_changes['companies'][comp]:
+                                            st.session_state.selected_changes['companies'][comp][key] = True
+                                    st.rerun()
+                            with col2:
+                                if st.button("❌ Keine auswählen", key="select_none_changes"):
+                                    for key in st.session_state.selected_changes['gp']:
+                                        st.session_state.selected_changes['gp'][key] = False
+                                    for fund in st.session_state.selected_changes['funds']:
+                                        for key in st.session_state.selected_changes['funds'][fund]:
+                                            st.session_state.selected_changes['funds'][fund][key] = False
+                                    for comp in st.session_state.selected_changes['companies']:
+                                        for key in st.session_state.selected_changes['companies'][comp]:
+                                            st.session_state.selected_changes['companies'][comp][key] = False
+                                    st.rerun()
+                            
+                            selected_count = 0
+                            for key, val in st.session_state.selected_changes['gp'].items():
+                                if val:
+                                    selected_count += 1
+                            for fund in st.session_state.selected_changes['funds'].values():
+                                for val in fund.values():
+                                    if val:
+                                        selected_count += 1
+                            for comp in st.session_state.selected_changes['companies'].values():
+                                for val in comp.values():
+                                    if val:
+                                        selected_count += 1
+                            
+                            st.info(f"📊 {selected_count} von {change_count} Änderungen ausgewählt")
+                        
+                        if not has_changes:
+                            st.info("ℹ️ Keine Änderungen an bestehenden Daten. Nur neue Einträge werden hinzugefügt.")
+                        
+                        # Neue Einträge zählen
+                        new_funds = []
+                        new_companies = {}
+                        
+                        with conn.cursor() as cursor:
+                            for fund_name, fund_info in data['funds_data'].items():
+                                cursor.execute("SELECT fund_id FROM funds WHERE fund_name = %s", (fund_name,))
+                                if not cursor.fetchone():
+                                    new_funds.append(fund_name)
+                                
+                                reporting_date = fund_info['metadata'].get('reporting_date')
+                                if reporting_date:
+                                    new_companies[fund_name] = []
+                                    for company in fund_info['companies']:
+                                        cursor.execute("""
+                                        SELECT history_id FROM portfolio_companies_history 
+                                        WHERE fund_id = (SELECT fund_id FROM funds WHERE fund_name = %s)
+                                        AND company_name = %s AND reporting_date = %s
+                                        """, (fund_name, company['company_name'], reporting_date))
+                                        if not cursor.fetchone():
+                                            new_companies[fund_name].append(company['company_name'])
+                        
+                        if new_funds:
+                            st.markdown("#### ➕ Neue Fonds")
+                            for f in new_funds:
+                                st.markdown(f"- {f}")
+                        
+                        for fund_name, companies in new_companies.items():
+                            if companies:
+                                st.markdown(f"#### ➕ Neue Companies in '{fund_name}'")
+                                for c in companies:
+                                    st.markdown(f"- {c}")
+                        
+                        st.markdown("---")
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.button("❌ Abbrechen", key="cancel_import"):
+                                st.session_state.import_preview = None
+                                st.session_state.import_data = None
+                                st.session_state.selected_changes = {'gp': {}, 'funds': {}, 'companies': {}}
+                                st.rerun()
+                        
+                        with col2:
+                            if st.button("✅ Bestätigen & Importieren", type="primary", key="confirm_import"):
+                                try:
+                                    with conn.cursor() as cursor:
+                                        gp_data = data['gp_data']
+                                        funds_data = data['funds_data']
+                                        selected = st.session_state.selected_changes
+                                        
+                                        # GP anlegen/aktualisieren
+                                        cursor.execute("SELECT gp_id FROM gps WHERE gp_name = %s", (gp_data['gp_name'],))
+                                        existing_gp = cursor.fetchone()
+                                        
+                                        if existing_gp:
+                                            gp_id = existing_gp[0]
+                                            update_fields = []
+                                            update_values = []
+                                            for field in ['rating', 'sector', 'headquarters', 'website',
+                                                         'last_meeting', 'next_raise_estimate', 'contact1_name',
+                                                         'contact1_function', 'contact1_email', 'contact1_phone',
+                                                         'contact2_name', 'contact2_function', 'contact2_email', 'contact2_phone']:
+                                                if gp_data.get(field):
+                                                    change_key = f"gp_{field}"
+                                                    if change_key in selected['gp'] and not selected['gp'][change_key]:
+                                                        continue
+                                                    update_fields.append(f"{field} = %s")
+                                                    update_values.append(gp_data[field])
+                                            
+                                            if update_fields:
+                                                update_values.append(gp_id)
+                                                cursor.execute(f"""
+                                                UPDATE gps SET {', '.join(update_fields)}, updated_at = CURRENT_TIMESTAMP
+                                                WHERE gp_id = %s
+                                                """, update_values)
+                                        else:
+                                            cursor.execute("""
+                                            INSERT INTO gps (gp_name, rating, sector, headquarters, website,
+                                                            last_meeting, next_raise_estimate, contact1_name, contact1_function,
+                                                            contact1_email, contact1_phone, contact2_name, contact2_function,
+                                                            contact2_email, contact2_phone)
+                                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                            RETURNING gp_id
+                                            """, (gp_data['gp_name'], gp_data.get('rating'),
+                                                 gp_data.get('sector'), gp_data.get('headquarters'), gp_data.get('website'),
+                                                 gp_data.get('last_meeting'), gp_data.get('next_raise_estimate'),
+                                                 gp_data.get('contact1_name'), gp_data.get('contact1_function'),
+                                                 gp_data.get('contact1_email'), gp_data.get('contact1_phone'),
+                                                 gp_data.get('contact2_name'), gp_data.get('contact2_function'),
+                                                 gp_data.get('contact2_email'), gp_data.get('contact2_phone')))
+                                            gp_id = cursor.fetchone()[0]
+                                        
+                                        imported_funds = 0
+                                        imported_companies = 0
+                                        updated_companies = 0
+                                        skipped_changes = 0
+                                        
+                                        for fund_name, fund_info in funds_data.items():
+                                            reporting_date = fund_info['metadata'].get('reporting_date')
+                                            if not reporting_date:
+                                                continue
+                                            
+                                            cursor.execute("SELECT fund_id FROM funds WHERE fund_name = %s", (fund_name,))
+                                            existing_fund = cursor.fetchone()
+                                            
+                                            if existing_fund:
+                                                fund_id = existing_fund[0]
+                                                update_fields = ['gp_id = %s']
+                                                update_values = [gp_id]
+                                                
+                                                if gp_data.get('strategy'):
+                                                    change_key = f"{fund_name}_strategy"
+                                                    fund_selected = selected['funds'].get(fund_name, {})
+                                                    if change_key not in fund_selected or fund_selected[change_key]:
+                                                        update_fields.append("strategy = %s")
+                                                        update_values.append(gp_data['strategy'])
+                                                    else:
+                                                        skipped_changes += 1
+                                                
+                                                for field in ['vintage_year', 'fund_size_m', 'currency', 'geography']:
+                                                    if fund_info['metadata'].get(field):
+                                                        change_key = f"{fund_name}_{field}"
+                                                        fund_selected = selected['funds'].get(fund_name, {})
+                                                        if change_key not in fund_selected or fund_selected[change_key]:
+                                                            update_fields.append(f"{field} = %s")
+                                                            update_values.append(fund_info['metadata'][field])
+                                                        else:
+                                                            skipped_changes += 1
+                                                
+                                                update_values.append(fund_id)
+                                                cursor.execute(f"""
+                                                UPDATE funds SET {', '.join(update_fields)}, updated_at = CURRENT_TIMESTAMP
+                                                WHERE fund_id = %s
+                                                """, update_values)
+                                            else:
+                                                cursor.execute("""
+                                                INSERT INTO funds (fund_name, gp_id, strategy, vintage_year, fund_size_m, currency, geography)
+                                                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                                RETURNING fund_id
+                                                """, (fund_name, gp_id, gp_data.get('strategy'),
+                                                     fund_info['metadata'].get('vintage_year'),
+                                                     fund_info['metadata'].get('fund_size_m'), fund_info['metadata'].get('currency'),
+                                                     fund_info['metadata'].get('geography')))
+                                                fund_id = cursor.fetchone()[0]
+                                                imported_funds += 1
+                                            
+                                            for company in fund_info['companies']:
+                                                company_name = company['company_name']
+                                                
+                                                cursor.execute("""
+                                                SELECT history_id FROM portfolio_companies_history
+                                                WHERE fund_id = %s AND company_name = %s AND reporting_date = %s
+                                                """, (fund_id, company_name, reporting_date))
+                                                existing_company = cursor.fetchone()
+                                                
+                                                if existing_company:
+                                                    update_fields = []
+                                                    update_values = []
+                                                    comp_key = f"{fund_name}_{company_name}"
+                                                    comp_selected = selected['companies'].get(comp_key, {})
+                                                    
+                                                    for field in ['investment_date', 'exit_date', 'ownership', 'invested_amount',
+                                                                 'realized_tvpi', 'unrealized_tvpi', 'entry_multiple', 'gross_irr']:
+                                                        if field in company and company[field] is not None:
+                                                            change_key = f"{comp_key}_{field}"
+                                                            if change_key not in comp_selected or comp_selected[change_key]:
+                                                                update_fields.append(f"{field} = %s")
+                                                                update_values.append(company[field])
+                                                            else:
+                                                                skipped_changes += 1
+                                                    
+                                                    if update_fields:
+                                                        update_values.extend([fund_id, company_name, reporting_date])
+                                                        cursor.execute(f"""
+                                                        UPDATE portfolio_companies_history
+                                                        SET {', '.join(update_fields)}
+                                                        WHERE fund_id = %s AND company_name = %s AND reporting_date = %s
+                                                        """, update_values)
+                                                        updated_companies += 1
+                                                else:
+                                                    cursor.execute("""
+                                                    INSERT INTO portfolio_companies_history
+                                                        (fund_id, company_name, reporting_date, investment_date, exit_date,
+                                                         ownership, invested_amount, realized_tvpi, unrealized_tvpi,
+                                                         entry_multiple, gross_irr)
+                                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                                    """, (fund_id, company_name, reporting_date,
+                                                         company.get('investment_date'), company.get('exit_date'),
+                                                         company.get('ownership'), company.get('invested_amount', 0),
+                                                         company.get('realized_tvpi', 0), company.get('unrealized_tvpi', 0),
+                                                         company.get('entry_multiple'), company.get('gross_irr')))
+                                                    imported_companies += 1
+                                            
+                                            # Metriken berechnen
+                                            cursor.execute("""
+                                            SELECT company_name, invested_amount, realized_tvpi, unrealized_tvpi
+                                            FROM portfolio_companies_history
+                                            WHERE fund_id = %s AND reporting_date = %s
+                                            """, (fund_id, reporting_date))
+                                            investments = cursor.fetchall()
+                                            
+                                            if investments:
+                                                total_invested = sum(inv[1] for inv in investments if inv[1])
+                                                if total_invested > 0:
+                                                    company_values = []
+                                                    total_realized_ccy = 0
+                                                    total_value_ccy = 0
+                                                    loss_invested = 0
+                                                    
+                                                    for comp, invested, real_tvpi, unreal_tvpi in investments:
+                                                        invested = invested or 0
+                                                        real_tvpi = real_tvpi or 0
+                                                        unreal_tvpi = unreal_tvpi or 0
+                                                        
+                                                        realized_ccy = real_tvpi * invested
+                                                        unrealized_ccy = unreal_tvpi * invested
+                                                        total_ccy = realized_ccy + unrealized_ccy
+                                                        
+                                                        company_values.append((comp, invested, total_ccy))
+                                                        total_realized_ccy += realized_ccy
+                                                        total_value_ccy += total_ccy
+                                                        
+                                                        if (real_tvpi + unreal_tvpi) < 1.0:
+                                                            loss_invested += invested
+                                                    
+                                                    company_values.sort(key=lambda x: x[2], reverse=True)
+                                                    
+                                                    top5_value = sum(cv[2] for cv in company_values[:5])
+                                                    top5_capital = sum(cv[1] for cv in company_values[:5])
+                                                    
+                                                    top5_value_pct = (top5_value / total_value_ccy * 100) if total_value_ccy > 0 else 0
+                                                    top5_capital_pct = (top5_capital / total_invested * 100) if total_invested > 0 else 0
+                                                    
+                                                    calc_tvpi = total_value_ccy / total_invested if total_invested > 0 else 0
+                                                    dpi = total_realized_ccy / total_invested if total_invested > 0 else 0
+                                                    
+                                                    realized_pct = (total_realized_ccy / total_value_ccy * 100) if total_value_ccy > 0 else 0
+                                                    loss_ratio = (loss_invested / total_invested * 100) if total_invested > 0 else 0
+                                                    
+                                                    cursor.execute("""
+                                                    INSERT INTO fund_metrics_history
+                                                        (fund_id, reporting_date, total_tvpi, dpi, top5_value_concentration,
+                                                         top5_capital_concentration, loss_ratio, realized_percentage, num_investments)
+                                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                                    ON CONFLICT (fund_id, reporting_date) DO UPDATE SET
+                                                        total_tvpi = EXCLUDED.total_tvpi,
+                                                        dpi = EXCLUDED.dpi,
+                                                        top5_value_concentration = EXCLUDED.top5_value_concentration,
+                                                        top5_capital_concentration = EXCLUDED.top5_capital_concentration,
+                                                        loss_ratio = EXCLUDED.loss_ratio,
+                                                        realized_percentage = EXCLUDED.realized_percentage,
+                                                        num_investments = EXCLUDED.num_investments
+                                                    """, (fund_id, reporting_date, calc_tvpi, dpi, top5_value_pct,
+                                                          top5_capital_pct, loss_ratio, realized_pct, len(investments)))
+                                                    
+                                                    cursor.execute("""
+                                                    SELECT MAX(reporting_date) FROM portfolio_companies_history WHERE fund_id = %s
+                                                    """, (fund_id,))
+                                                    latest_date = cursor.fetchone()[0]
+                                                    latest_date_str = latest_date.strftime('%Y-%m-%d') if hasattr(latest_date, 'strftime') else str(latest_date)
+                                                    
+                                                    if reporting_date == latest_date_str:
+                                                        cursor.execute("DELETE FROM portfolio_companies WHERE fund_id = %s", (fund_id,))
+                                                        
+                                                        cursor.execute("""
+                                                        INSERT INTO portfolio_companies 
+                                                            (fund_id, company_name, invested_amount, realized_tvpi, unrealized_tvpi,
+                                                             investment_date, exit_date, entry_multiple, gross_irr, ownership)
+                                                        SELECT fund_id, company_name, invested_amount, realized_tvpi, unrealized_tvpi,
+                                                               investment_date, exit_date, entry_multiple, gross_irr, ownership
+                                                        FROM portfolio_companies_history
+                                                        WHERE fund_id = %s AND reporting_date = %s
+                                                        """, (fund_id, reporting_date))
+                                                        
+                                                        cursor.execute("""
+                                                        INSERT INTO fund_metrics 
+                                                            (fund_id, total_tvpi, dpi, top5_value_concentration,
+                                                             top5_capital_concentration, loss_ratio, realized_percentage, 
+                                                             num_investments, calculation_date)
+                                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                                        ON CONFLICT (fund_id) DO UPDATE SET
+                                                            total_tvpi = EXCLUDED.total_tvpi,
+                                                            dpi = EXCLUDED.dpi,
+                                                            top5_value_concentration = EXCLUDED.top5_value_concentration,
+                                                            top5_capital_concentration = EXCLUDED.top5_capital_concentration,
+                                                            loss_ratio = EXCLUDED.loss_ratio,
+                                                            realized_percentage = EXCLUDED.realized_percentage,
+                                                            num_investments = EXCLUDED.num_investments,
+                                                            calculation_date = EXCLUDED.calculation_date
+                                                        """, (fund_id, calc_tvpi, dpi, top5_value_pct,
+                                                              top5_capital_pct, loss_ratio, realized_pct, 
+                                                              len(investments), reporting_date))
+                                        
+                                        conn.commit()
+                                    
+                                    clear_cache()
+                                    
+                                    st.session_state.import_preview = None
+                                    st.session_state.import_data = None
+                                    st.session_state.selected_changes = {'gp': {}, 'funds': {}, 'companies': {}}
+                                    
+                                    st.success(f"""✅ Import erfolgreich!
+                                    - GP: {data['gp_data']['gp_name']}
+                                    - Neue Fonds: {imported_funds}
+                                    - Neue Companies: {imported_companies}
+                                    - Aktualisierte Companies: {updated_companies}
+                                    - Übersprungene Änderungen: {skipped_changes}
+                                    """)
+                                    st.session_state.filter_version += 1
+                                    time.sleep(2)
+                                    st.rerun()
+                                    
+                                except Exception as e:
+                                    conn.rollback()
+                                    st.error(f"❌ Fehler: {e}")
+                                    import traceback
+                                    st.code(traceback.format_exc())
                 
                 # EDIT PORTFOLIO COMPANY
                 with admin_tab2:
@@ -1726,8 +2500,8 @@ def show_main_app():
             conn.close()
 
     st.sidebar.markdown("---")
-    st.sidebar.markdown("**PE Fund Analyzer v4.0**")
-    st.sidebar.markdown("🔐 Mit Supabase Auth")
+    st.sidebar.markdown("**PE Fund Analyzer v4.1**")
+    st.sidebar.markdown("🔐 Mit Supabase Auth & Rollen")
 
 
 # === APP ENTRY POINT ===
