@@ -617,7 +617,7 @@ def create_mekko_chart(fund_id, fund_name, conn, reporting_date=None):
 def load_all_funds(conn):
     query = """
     SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
-           m.total_tvpi, m.dpi, m.top5_value_concentration, m.loss_ratio
+           f.currency, m.total_tvpi, m.dpi, m.top5_value_concentration, m.loss_ratio
     FROM funds f
     LEFT JOIN gps g ON f.gp_id = g.gp_id
     LEFT JOIN fund_metrics m ON f.fund_id = m.fund_id
@@ -631,7 +631,7 @@ def load_funds_with_history_metrics(conn, year=None, quarter_date=None):
     if quarter_date:
         query = """
         SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
-               m.total_tvpi, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
+               f.currency, m.total_tvpi, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
         FROM funds f
         LEFT JOIN gps g ON f.gp_id = g.gp_id
         LEFT JOIN fund_metrics_history m ON f.fund_id = m.fund_id AND m.reporting_date = %s
@@ -642,7 +642,7 @@ def load_funds_with_history_metrics(conn, year=None, quarter_date=None):
     elif year:
         query = """
         SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
-               m.total_tvpi, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
+               f.currency, m.total_tvpi, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
         FROM funds f
         LEFT JOIN gps g ON f.gp_id = g.gp_id
         LEFT JOIN (
@@ -892,13 +892,14 @@ def show_main_app():
                     comparison_df = comparison_df.drop_duplicates(subset=['fund_id'], keep='first')
                     
                     if 'reporting_date' in comparison_df.columns and date_mode != "Aktuell":
-                        comparison_df = comparison_df[['fund_name', 'gp_name', 'vintage_year', 'strategy', 'rating', 'total_tvpi', 'dpi', 'top5_value_concentration', 'loss_ratio', 'reporting_date']]
-                        comparison_df.columns = ['Fund', 'GP', 'Vintage', 'Strategy', 'Rating', 'TVPI', 'DPI', 'Top 5 Conc.', 'Loss Ratio', 'Stichtag']
+                        comparison_df = comparison_df[['fund_name', 'gp_name', 'vintage_year', 'strategy', 'currency', 'rating', 'total_tvpi', 'dpi', 'top5_value_concentration', 'loss_ratio', 'reporting_date']]
+                        comparison_df.columns = ['Fund', 'GP', 'Vintage', 'Strategy', 'Währung', 'Rating', 'TVPI', 'DPI', 'Top 5 Conc.', 'Loss Ratio', 'Stichtag']
                         comparison_df['Stichtag'] = comparison_df['Stichtag'].apply(lambda x: format_quarter(x) if pd.notna(x) else "-")
                     else:
-                        comparison_df = comparison_df[['fund_name', 'gp_name', 'vintage_year', 'strategy', 'rating', 'total_tvpi', 'dpi', 'top5_value_concentration', 'loss_ratio']]
-                        comparison_df.columns = ['Fund', 'GP', 'Vintage', 'Strategy', 'Rating', 'TVPI', 'DPI', 'Top 5 Conc.', 'Loss Ratio']
+                        comparison_df = comparison_df[['fund_name', 'gp_name', 'vintage_year', 'strategy', 'currency', 'rating', 'total_tvpi', 'dpi', 'top5_value_concentration', 'loss_ratio']]
+                        comparison_df.columns = ['Fund', 'GP', 'Vintage', 'Strategy', 'Währung', 'Rating', 'TVPI', 'DPI', 'Top 5 Conc.', 'Loss Ratio']
                     
+                    comparison_df['Währung'] = comparison_df['Währung'].apply(lambda x: x if pd.notna(x) else "-")
                     comparison_df['TVPI'] = comparison_df['TVPI'].apply(lambda x: f"{x:.2f}x" if pd.notna(x) else "-")
                     comparison_df['DPI'] = comparison_df['DPI'].apply(lambda x: f"{x:.2f}x" if pd.notna(x) else "-")
                     comparison_df['Top 5 Conc.'] = comparison_df['Top 5 Conc.'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "-")
@@ -1019,7 +1020,7 @@ def show_main_app():
                         
                         with st.expander(f"📂 {fund_name}" + (f" ({report_date})" if report_date else ""), expanded=True):
                             fund_info = pd.read_sql_query("""
-                            SELECT g.gp_name, f.vintage_year, f.fund_size_m, f.strategy, f.geography, g.rating, g.last_meeting, g.next_raise_estimate
+                            SELECT g.gp_name, f.vintage_year, f.fund_size_m, f.currency, f.strategy, f.geography, g.rating, g.last_meeting, g.next_raise_estimate
                             FROM funds f LEFT JOIN gps g ON f.gp_id = g.gp_id WHERE f.fund_id = %s
                             """, conn, params=(fund_id,))
                             
@@ -1029,7 +1030,7 @@ def show_main_app():
                                 metrics = pd.read_sql_query("SELECT total_tvpi, dpi, num_investments FROM fund_metrics WHERE fund_id = %s", conn, params=(fund_id,))
                             
                             if not fund_info.empty:
-                                col1, col2, col3 = st.columns(3)
+                                col1, col2, col3, col4 = st.columns(4)
                                 with col1:
                                     st.metric("GP", fund_info['gp_name'].iloc[0] or "N/A")
                                     st.metric("Vintage", int(fund_info['vintage_year'].iloc[0]) if pd.notna(fund_info['vintage_year'].iloc[0]) else "N/A")
@@ -1039,6 +1040,11 @@ def show_main_app():
                                 with col3:
                                     st.metric("Strategy", fund_info['strategy'].iloc[0] or "N/A")
                                     st.metric("# Investments", int(metrics['num_investments'].iloc[0]) if not metrics.empty and pd.notna(metrics['num_investments'].iloc[0]) else "N/A")
+                                with col4:
+                                    st.metric("Währung", fund_info['currency'].iloc[0] or "N/A")
+                                    fund_size = fund_info['fund_size_m'].iloc[0]
+                                    currency = fund_info['currency'].iloc[0] or ""
+                                    st.metric("Fund Size", f"{fund_size:,.0f} Mio. {currency}" if pd.notna(fund_size) else "N/A")
                                 
                                 st.subheader("Portfolio Companies")
                                 if report_date:
