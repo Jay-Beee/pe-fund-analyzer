@@ -1044,7 +1044,7 @@ def show_main_app():
                                     st.metric("Währung", fund_info['currency'].iloc[0] or "N/A")
                                     fund_size = fund_info['fund_size_m'].iloc[0]
                                     currency = fund_info['currency'].iloc[0] or ""
-                                    st.metric("Fund Size", f"{fund_size:,.0f} Mio. {currency}" if pd.notna(fund_size) else "N/A")
+                                    st.metric("Fund Size", f"{currency} {fund_size:,.0f}m" if pd.notna(fund_size) else "N/A")
                                 
                                 st.subheader("Portfolio Companies")
                                 if report_date:
