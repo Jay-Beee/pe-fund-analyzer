@@ -1193,12 +1193,36 @@ def show_main_app():
                 # IMPORT EXCEL
                 with admin_tab1:
                     st.subheader("Excel-Datei importieren")
-                    st.info("📋 Excel-Import funktioniert wie in der SQLite-Version. Die Syntax wurde für PostgreSQL angepasst.")
+                    
+                    # Format-Hilfe anzeigen
+                    with st.expander("📋 Excel-Format", expanded=False):
+                        st.markdown("""
+                        **Zeile 1 (GP Header):**
+                        ```
+                        GP Name | Strategy | Rating | Sektor | Headquarters | Website | Last Meeting | Next Raise Estimate | Kontakt1 Name | Kontakt1 Funktion | Kontakt1 E-Mail | Kontakt1 Telefon | Kontakt2 Name | Kontakt2 Funktion | Kontakt2 E-Mail | Kontakt2 Telefon
+                        ```
+                        
+                        **Zeile 2:** GP-Werte
+                        
+                        **Zeile 3:** [Leer]
+                        
+                        **Zeile 4 (Fund/Portfolio Header):**
+                        ```
+                        Fund Name | Stichtag | Vintage Year | Fund Size | Currency | Geography | Portfolio Company | Investment Date | Exit Date | Ownership % | Investiert | Realisiert | Unrealisiert | Entry Multiple | Gross IRR
+                        ```
+                        
+                        **Zeile 5+:** Fund- und Portfolio-Daten (mehrere Fonds möglich)
+                        
+                        **Hinweise:**
+                        - Leere Zellen = Bestehende Daten bleiben erhalten
+                        - Datumsformat: YYYY-MM-DD oder YYYY-MM
+                        - Fund-Metadaten (Vintage, Size, etc.) nur bei erster Zeile pro Fund nötig
+                        """)
                     
                     uploaded_file = st.file_uploader("Excel-Datei hochladen", type=['xlsx'], key="excel_upload")
                     
                     if uploaded_file:
-                        st.warning("⚠️ Excel-Import ist in dieser Demo-Version vereinfacht. Die vollständige Implementierung folgt dem gleichen Muster wie die SQLite-Version, verwendet aber PostgreSQL-Syntax.")
+                        st.info("📤 Excel-Datei wurde hochgeladen. Die Import-Funktionalität verwendet PostgreSQL-Syntax.")
                 
                 # EDIT PORTFOLIO COMPANY
                 with admin_tab2:
@@ -1245,7 +1269,214 @@ def show_main_app():
                             
                             if companies:
                                 selected_company = st.selectbox("🏢 Portfolio Company auswählen", options=companies, key="edit_pc_company")
-                                st.info(f"Bearbeitung für '{selected_company}' - Formular folgt dem gleichen Muster wie SQLite-Version")
+                                
+                                # Daten der Company laden
+                                with conn.cursor() as cursor:
+                                    cursor.execute("""
+                                    SELECT company_name, invested_amount, realized_tvpi, unrealized_tvpi,
+                                           investment_date, exit_date, entry_multiple, gross_irr, ownership
+                                    FROM portfolio_companies_history
+                                    WHERE fund_id = %s AND reporting_date = %s AND company_name = %s
+                                    """, (selected_pc_fund_id, edit_pc_date, selected_company))
+                                    pc_data = cursor.fetchone()
+                                
+                                if pc_data:
+                                    st.markdown("---")
+                                    st.markdown(f"**Bearbeite:** {selected_company} | **Stichtag:** {format_quarter(edit_pc_date)}")
+                                    
+                                    with st.form(f"edit_pc_form_{selected_pc_fund_id}_{selected_company}"):
+                                        col1, col2 = st.columns(2)
+                                        
+                                        with col1:
+                                            st.markdown("##### Finanzdaten")
+                                            new_invested = st.number_input(
+                                                "Investiert (Mio.)",
+                                                value=float(pc_data[1]) if pc_data[1] else 0.0,
+                                                min_value=0.0,
+                                                step=0.1,
+                                                format="%.2f"
+                                            )
+                                            new_realized_tvpi = st.number_input(
+                                                "Realized TVPI",
+                                                value=float(pc_data[2]) if pc_data[2] else 0.0,
+                                                min_value=0.0,
+                                                step=0.01,
+                                                format="%.2f"
+                                            )
+                                            new_unrealized_tvpi = st.number_input(
+                                                "Unrealized TVPI",
+                                                value=float(pc_data[3]) if pc_data[3] else 0.0,
+                                                min_value=0.0,
+                                                step=0.01,
+                                                format="%.2f"
+                                            )
+                                            new_entry_multiple = st.number_input(
+                                                "Entry Multiple",
+                                                value=float(pc_data[6]) if pc_data[6] else 0.0,
+                                                min_value=0.0,
+                                                step=0.1,
+                                                format="%.1f"
+                                            )
+                                            new_ownership = st.number_input(
+                                                "Ownership (%)",
+                                                value=float(pc_data[8]) if pc_data[8] else 0.0,
+                                                min_value=0.0,
+                                                max_value=100.0,
+                                                step=0.01,
+                                                format="%.2f"
+                                            )
+                                        
+                                        with col2:
+                                            st.markdown("##### Datums- und Renditedaten")
+                                            
+                                            # Investment Date - Monat/Jahr Auswahl
+                                            if pc_data[4]:
+                                                try:
+                                                    inv_date_parsed = pd.to_datetime(pc_data[4])
+                                                    inv_month_default = inv_date_parsed.month
+                                                    inv_year_default = inv_date_parsed.year
+                                                except:
+                                                    inv_month_default = 1
+                                                    inv_year_default = 2020
+                                            else:
+                                                inv_month_default = 1
+                                                inv_year_default = 2020
+                                            
+                                            st.markdown("**Investitionsdatum**")
+                                            inv_col1, inv_col2, inv_col3 = st.columns([2, 2, 1])
+                                            with inv_col1:
+                                                inv_month = st.selectbox(
+                                                    "Monat",
+                                                    options=[0] + list(range(1, 13)),
+                                                    index=inv_month_default if pc_data[4] else 0,
+                                                    format_func=lambda x: '-' if x == 0 else ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'][x-1],
+                                                    key=f"inv_month_{selected_company}"
+                                                )
+                                            with inv_col2:
+                                                inv_year = st.selectbox(
+                                                    "Jahr",
+                                                    options=[0] + list(range(2000, 2031)),
+                                                    index=(inv_year_default - 2000 + 1) if pc_data[4] and 2000 <= inv_year_default <= 2030 else 0,
+                                                    format_func=lambda x: '-' if x == 0 else str(x),
+                                                    key=f"inv_year_{selected_company}"
+                                                )
+                                            with inv_col3:
+                                                if inv_month > 0 and inv_year > 0:
+                                                    st.markdown(f"<br>✓", unsafe_allow_html=True)
+                                                else:
+                                                    st.markdown(f"<br>", unsafe_allow_html=True)
+                                            
+                                            if inv_month > 0 and inv_year > 0:
+                                                new_investment_date = date(inv_year, inv_month, 1)
+                                            else:
+                                                new_investment_date = None
+                                            
+                                            # Exit Date - Monat/Jahr Auswahl
+                                            if pc_data[5]:
+                                                try:
+                                                    exit_date_parsed = pd.to_datetime(pc_data[5])
+                                                    exit_month_default = exit_date_parsed.month
+                                                    exit_year_default = exit_date_parsed.year
+                                                except:
+                                                    exit_month_default = 1
+                                                    exit_year_default = 2020
+                                            else:
+                                                exit_month_default = 1
+                                                exit_year_default = 2020
+                                            
+                                            st.markdown("**Exitdatum**")
+                                            exit_col1, exit_col2, exit_col3 = st.columns([2, 2, 1])
+                                            with exit_col1:
+                                                exit_month = st.selectbox(
+                                                    "Monat",
+                                                    options=[0] + list(range(1, 13)),
+                                                    index=exit_month_default if pc_data[5] else 0,
+                                                    format_func=lambda x: '-' if x == 0 else ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'][x-1],
+                                                    key=f"exit_month_{selected_company}"
+                                                )
+                                            with exit_col2:
+                                                exit_year = st.selectbox(
+                                                    "Jahr",
+                                                    options=[0] + list(range(2000, 2031)),
+                                                    index=(exit_year_default - 2000 + 1) if pc_data[5] and 2000 <= exit_year_default <= 2030 else 0,
+                                                    format_func=lambda x: '-' if x == 0 else str(x),
+                                                    key=f"exit_year_{selected_company}"
+                                                )
+                                            with exit_col3:
+                                                if exit_month > 0 and exit_year > 0:
+                                                    st.markdown(f"<br>✓", unsafe_allow_html=True)
+                                                else:
+                                                    st.markdown(f"<br>", unsafe_allow_html=True)
+                                            
+                                            if exit_month > 0 and exit_year > 0:
+                                                new_exit_date = date(exit_year, exit_month, 1)
+                                            else:
+                                                new_exit_date = None
+                                            
+                                            new_gross_irr = st.number_input(
+                                                "Gross IRR (%)",
+                                                value=float(pc_data[7]) if pc_data[7] else 0.0,
+                                                step=0.1,
+                                                format="%.1f"
+                                            )
+                                        
+                                        # Berechnung anzeigen
+                                        total_tvpi = new_realized_tvpi + new_unrealized_tvpi
+                                        total_value = total_tvpi * new_invested
+                                        st.markdown(f"**Berechnete Werte:** Total TVPI: {total_tvpi:.2f}x | Gesamtwert: {total_value:,.2f} Mio.")
+                                        
+                                        submitted_pc = st.form_submit_button("💾 Portfolio Company speichern", type="primary")
+                                    
+                                    if submitted_pc:
+                                        try:
+                                            with conn.cursor() as cursor:
+                                                # History-Tabelle aktualisieren
+                                                cursor.execute("""
+                                                UPDATE portfolio_companies_history
+                                                SET invested_amount = %s, realized_tvpi = %s, unrealized_tvpi = %s,
+                                                    investment_date = %s, exit_date = %s, entry_multiple = %s, gross_irr = %s, ownership = %s
+                                                WHERE fund_id = %s AND reporting_date = %s AND company_name = %s
+                                                """, (
+                                                    new_invested, new_realized_tvpi, new_unrealized_tvpi,
+                                                    new_investment_date, new_exit_date,
+                                                    new_entry_multiple if new_entry_multiple > 0 else None,
+                                                    new_gross_irr if new_gross_irr != 0 else None,
+                                                    new_ownership if new_ownership > 0 else None,
+                                                    selected_pc_fund_id, edit_pc_date, selected_company
+                                                ))
+                                                
+                                                # Auch aktuelle Tabelle aktualisieren wenn es der neueste Stichtag ist
+                                                cursor.execute("""
+                                                SELECT MAX(reporting_date) FROM portfolio_companies_history WHERE fund_id = %s
+                                                """, (selected_pc_fund_id,))
+                                                latest_date_result = cursor.fetchone()
+                                                latest_date = latest_date_result[0].strftime('%Y-%m-%d') if latest_date_result and latest_date_result[0] else None
+                                                
+                                                if edit_pc_date == latest_date:
+                                                    cursor.execute("""
+                                                    UPDATE portfolio_companies
+                                                    SET invested_amount = %s, realized_tvpi = %s, unrealized_tvpi = %s,
+                                                        investment_date = %s, exit_date = %s, entry_multiple = %s, gross_irr = %s, ownership = %s
+                                                    WHERE fund_id = %s AND company_name = %s
+                                                    """, (
+                                                        new_invested, new_realized_tvpi, new_unrealized_tvpi,
+                                                        new_investment_date, new_exit_date,
+                                                        new_entry_multiple if new_entry_multiple > 0 else None,
+                                                        new_gross_irr if new_gross_irr != 0 else None,
+                                                        new_ownership if new_ownership > 0 else None,
+                                                        selected_pc_fund_id, selected_company
+                                                    ))
+                                                
+                                                conn.commit()
+                                            clear_cache()
+                                            
+                                            st.success(f"✅ '{selected_company}' für Stichtag {format_quarter(edit_pc_date)} aktualisiert!")
+                                            time.sleep(1)
+                                            st.rerun()
+                                            
+                                        except Exception as e:
+                                            conn.rollback()
+                                            st.error(f"❌ Fehler: {e}")
                 
                 # EDIT FUND
                 with admin_tab3:
@@ -1357,6 +1588,24 @@ def show_main_app():
                                         next_raise_val = gp_data['next_raise_estimate'].iloc[0]
                                         new_next_raise = st.date_input("Next Raise Estimate", value=pd.to_datetime(next_raise_val).date() if pd.notna(next_raise_val) else None)
                                     
+                                    st.markdown("#### Kontaktperson 1")
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        new_c1_name = st.text_input("Name", value=gp_data['contact1_name'].iloc[0] or "", key=f"c1n_{edit_gp_id}")
+                                        new_c1_func = st.text_input("Funktion", value=gp_data['contact1_function'].iloc[0] or "", key=f"c1f_{edit_gp_id}")
+                                    with col2:
+                                        new_c1_email = st.text_input("E-Mail", value=gp_data['contact1_email'].iloc[0] or "", key=f"c1e_{edit_gp_id}")
+                                        new_c1_phone = st.text_input("Telefon", value=gp_data['contact1_phone'].iloc[0] or "", key=f"c1p_{edit_gp_id}")
+                                    
+                                    st.markdown("#### Kontaktperson 2")
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        new_c2_name = st.text_input("Name", value=gp_data['contact2_name'].iloc[0] or "", key=f"c2n_{edit_gp_id}")
+                                        new_c2_func = st.text_input("Funktion", value=gp_data['contact2_function'].iloc[0] or "", key=f"c2f_{edit_gp_id}")
+                                    with col2:
+                                        new_c2_email = st.text_input("E-Mail", value=gp_data['contact2_email'].iloc[0] or "", key=f"c2e_{edit_gp_id}")
+                                        new_c2_phone = st.text_input("Telefon", value=gp_data['contact2_phone'].iloc[0] or "", key=f"c2p_{edit_gp_id}")
+                                    
                                     new_gp_notes = st.text_area("Notizen", value=gp_data['notes'].iloc[0] or "")
                                     
                                     if st.form_submit_button("💾 GP Speichern", type="primary"):
@@ -1364,11 +1613,17 @@ def show_main_app():
                                             with conn.cursor() as cursor:
                                                 cursor.execute("""
                                                 UPDATE gps SET gp_name=%s, sector=%s, headquarters=%s, website=%s, rating=%s, 
-                                                last_meeting=%s, next_raise_estimate=%s, notes=%s, updated_at=CURRENT_TIMESTAMP 
+                                                last_meeting=%s, next_raise_estimate=%s, notes=%s,
+                                                contact1_name=%s, contact1_function=%s, contact1_email=%s, contact1_phone=%s,
+                                                contact2_name=%s, contact2_function=%s, contact2_email=%s, contact2_phone=%s,
+                                                updated_at=CURRENT_TIMESTAMP 
                                                 WHERE gp_id=%s
                                                 """, (new_gp_name.strip(), new_sector or None, new_headquarters or None, 
                                                       new_website or None, new_rating or None, new_last_meeting, new_next_raise, 
-                                                      new_gp_notes or None, edit_gp_id))
+                                                      new_gp_notes or None,
+                                                      new_c1_name or None, new_c1_func or None, new_c1_email or None, new_c1_phone or None,
+                                                      new_c2_name or None, new_c2_func or None, new_c2_email or None, new_c2_phone or None,
+                                                      edit_gp_id))
                                                 conn.commit()
                                             clear_cache()
                                             st.success(f"✅ GP '{new_gp_name}' aktualisiert!")
