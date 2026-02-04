@@ -1232,16 +1232,17 @@ def show_main_app():
             with tab5:
                 st.header("👔 General Partners (GPs)")
                 
-                # Alle GPs mit verbundenen Fonds laden
+                # Alle GPs mit Placement Agents laden
                 gp_query = """
                 SELECT g.gp_id, g.gp_name, g.sector, g.headquarters, g.website, g.rating, 
                        g.last_meeting, g.next_raise_estimate,
                        g.contact1_name, g.contact1_function, g.contact1_email, g.contact1_phone,
                        g.contact2_name, g.contact2_function, g.contact2_email, g.contact2_phone,
                        COUNT(f.fund_id) as fund_count,
-                       STRING_AGG(f.fund_name, ', ' ORDER BY f.fund_name) as funds
+                       STRING_AGG(DISTINCT pa.pa_name, ', ' ORDER BY pa.pa_name) as placement_agents
                 FROM gps g
                 LEFT JOIN funds f ON g.gp_id = f.gp_id
+                LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
                 GROUP BY g.gp_id, g.gp_name, g.sector, g.headquarters, g.website, g.rating,
                          g.last_meeting, g.next_raise_estimate,
                          g.contact1_name, g.contact1_function, g.contact1_email, g.contact1_phone,
@@ -1257,7 +1258,7 @@ def show_main_app():
                     display_gps = all_gps_df.copy()
                     display_gps['last_meeting'] = display_gps['last_meeting'].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) and x else "-")
                     display_gps['next_raise_estimate'] = display_gps['next_raise_estimate'].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) and x else "-")
-                    display_gps['funds'] = display_gps['funds'].apply(lambda x: x if x else "-")
+                    display_gps['placement_agents'] = display_gps['placement_agents'].apply(lambda x: x if x else "-")
                     
                     # Spalten für Anzeige auswählen und umbenennen
                     display_columns = {
@@ -1270,13 +1271,13 @@ def show_main_app():
                         'contact1_name': 'Kontakt 1',
                         'contact1_email': 'E-Mail 1',
                         'fund_count': 'Anzahl Fonds',
-                        'funds': 'Verbundene Fonds'
+                        'placement_agents': 'Placement Agents'
                     }
                     
                     display_df = display_gps[list(display_columns.keys())].rename(columns=display_columns)
                     display_df = display_df.fillna("-")
                     
-                    st.dataframe(display_df, width='stretch', hide_index=True)
+                    st.dataframe(display_df, use_container_width=True, hide_index=True)
                     
                     # Export als CSV
                     csv_gps = display_df.to_csv(index=False).encode('utf-8')
