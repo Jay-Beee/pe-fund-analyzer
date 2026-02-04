@@ -1182,7 +1182,7 @@ def show_main_app():
                                 selected_chart_metrics = st.multiselect("📊 Metriken auswählen", options=['TVPI', 'DPI', 'Loss Ratio', 'Realisiert %'], default=['TVPI', 'DPI'], key=f"chart_metrics_{fund_id}")
                                 
                                 if selected_chart_metrics:
-                                    fig, ax1 = plt.subplots(figsize=(6, 5))
+                                    fig, ax1 = plt.subplots(figsize=(12, 5))
                                     colors = {'TVPI': 'darkblue', 'DPI': 'green', 'Loss Ratio': 'red', 'Realisiert %': 'orange'}
                                     markers = {'TVPI': 'o', 'DPI': 's', 'Loss Ratio': '^', 'Realisiert %': 'd'}
                                     
