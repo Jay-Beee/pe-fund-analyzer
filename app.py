@@ -212,17 +212,41 @@ def ensure_placement_agents_table(conn):
         CREATE TABLE IF NOT EXISTS placement_agents (
             pa_id SERIAL PRIMARY KEY,
             pa_name TEXT UNIQUE NOT NULL,
-            sector TEXT,
             headquarters TEXT,
             website TEXT,
             rating TEXT,
             last_meeting DATE,
+            contact1_name TEXT,
+            contact1_function TEXT,
+            contact1_email TEXT,
+            contact1_phone TEXT,
             notes TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """)
         conn.commit()
+
+
+def ensure_placement_agent_contact_fields(conn):
+    """Fügt Kontaktfelder zur Placement Agents Tabelle hinzu falls nicht vorhanden"""
+    contact_fields = [
+        ('contact1_name', 'TEXT'),
+        ('contact1_function', 'TEXT'),
+        ('contact1_email', 'TEXT'),
+        ('contact1_phone', 'TEXT')
+    ]
+    
+    with conn.cursor() as cursor:
+        for field_name, field_type in contact_fields:
+            if not check_column_exists(conn, 'placement_agents', field_name):
+                cursor.execute(f"ALTER TABLE placement_agents ADD COLUMN {field_name} {field_type}")
+                conn.commit()
+        
+        # Entferne sector falls vorhanden (nicht mehr benötigt)
+        if check_column_exists(conn, 'placement_agents', 'sector'):
+            cursor.execute("ALTER TABLE placement_agents DROP COLUMN sector")
+            conn.commit()
 
 
 def ensure_funds_table(conn):
@@ -784,6 +808,9 @@ def show_main_app():
         # Placement Agent Spalte hinzufügen falls nötig
         ensure_placement_agent_column(conn)
         
+        # Placement Agent Kontaktfelder hinzufügen falls nötig
+        ensure_placement_agent_contact_fields(conn)
+        
         # Neue Portfolio Company Felder hinzufügen
         ensure_portfolio_company_fields(conn)
         
@@ -1197,12 +1224,14 @@ def show_main_app():
                 # Alle Placement Agents laden
                 with conn.cursor() as cursor:
                     cursor.execute("""
-                    SELECT pa.pa_id, pa.pa_name, pa.sector, pa.headquarters, pa.website, pa.rating, pa.last_meeting,
+                    SELECT pa.pa_id, pa.pa_name, pa.headquarters, pa.website, pa.rating, pa.last_meeting,
+                           pa.contact1_name, pa.contact1_function, pa.contact1_email, pa.contact1_phone,
                            COUNT(f.fund_id) as fund_count,
                            STRING_AGG(f.fund_name, ', ' ORDER BY f.fund_name) as funds
                     FROM placement_agents pa
                     LEFT JOIN funds f ON pa.pa_id = f.placement_agent_id
-                    GROUP BY pa.pa_id, pa.pa_name, pa.sector, pa.headquarters, pa.website, pa.rating, pa.last_meeting
+                    GROUP BY pa.pa_id, pa.pa_name, pa.headquarters, pa.website, pa.rating, pa.last_meeting,
+                             pa.contact1_name, pa.contact1_function, pa.contact1_email, pa.contact1_phone
                     ORDER BY pa.pa_name
                     """)
                     all_pas = cursor.fetchall()
@@ -1211,12 +1240,14 @@ def show_main_app():
                     st.info("ℹ️ Keine Placement Agents vorhanden. Placement Agents können im Admin-Tab erstellt oder über Excel importiert werden.")
                 else:
                     # Übersichtstabelle
-                    pa_df = pd.DataFrame(all_pas, columns=['ID', 'Name', 'Sektor', 'Headquarters', 'Website', 'Rating', 'Last Meeting', 'Anzahl Fonds', 'Zugeordnete Fonds'])
+                    pa_df = pd.DataFrame(all_pas, columns=['ID', 'Name', 'Headquarters', 'Website', 'Rating', 'Last Meeting', 
+                                                           'Kontakt Name', 'Kontakt Funktion', 'Kontakt E-Mail', 'Kontakt Telefon',
+                                                           'Anzahl Fonds', 'Zugeordnete Fonds'])
                     pa_df['Last Meeting'] = pa_df['Last Meeting'].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) and x else "-")
                     pa_df['Zugeordnete Fonds'] = pa_df['Zugeordnete Fonds'].apply(lambda x: x if x else "-")
                     
                     st.dataframe(
-                        pa_df[['Name', 'Sektor', 'Headquarters', 'Rating', 'Last Meeting', 'Anzahl Fonds', 'Zugeordnete Fonds']],
+                        pa_df[['Name', 'Headquarters', 'Rating', 'Last Meeting', 'Kontakt Name', 'Anzahl Fonds', 'Zugeordnete Fonds']],
                         use_container_width=True,
                         hide_index=True
                     )
@@ -1234,18 +1265,29 @@ def show_main_app():
                             
                             col1, col2, col3 = st.columns(3)
                             with col1:
-                                st.metric("Sektor", selected_pa[2] or "N/A")
-                                st.metric("Rating", selected_pa[5] or "N/A")
+                                st.metric("Headquarters", selected_pa[2] or "N/A")
+                                st.metric("Rating", selected_pa[4] or "N/A")
                             with col2:
-                                st.metric("Headquarters", selected_pa[3] or "N/A")
-                                st.metric("Last Meeting", selected_pa[6].strftime('%Y-%m-%d') if selected_pa[6] else "N/A")
+                                st.metric("Website", selected_pa[3] or "N/A")
+                                st.metric("Last Meeting", selected_pa[5].strftime('%Y-%m-%d') if selected_pa[5] else "N/A")
                             with col3:
-                                st.metric("Website", selected_pa[4] or "N/A")
-                                st.metric("Anzahl Fonds", selected_pa[7])
+                                st.metric("Anzahl Fonds", selected_pa[10])
                             
-                            if selected_pa[8]:
+                            # Kontaktperson anzeigen
+                            if selected_pa[6]:  # contact1_name
+                                st.markdown("**Kontaktperson:**")
+                                contact_info = f"**{selected_pa[6]}**"
+                                if selected_pa[7]:  # function
+                                    contact_info += f" - {selected_pa[7]}"
+                                st.markdown(contact_info)
+                                if selected_pa[8]:  # email
+                                    st.markdown(f"📧 {selected_pa[8]}")
+                                if selected_pa[9]:  # phone
+                                    st.markdown(f"📞 {selected_pa[9]}")
+                            
+                            if selected_pa[11]:  # funds
                                 st.markdown("**Zugeordnete Fonds:**")
-                                for fund in selected_pa[8].split(', '):
+                                for fund in selected_pa[11].split(', '):
                                     st.markdown(f"- {fund}")
             
             # TAB 6: ADMIN (nur für Admins sichtbar)
@@ -1355,7 +1397,7 @@ def show_main_app():
                             st.markdown("""
                             **Zeile 1 (GP Header):**
                             ```
-                            GP Name | Strategy | Rating | Sektor | Headquarters | Website | Last Meeting | Next Raise Estimate | Kontakt1 Name | Kontakt1 Funktion | Kontakt1 E-Mail | Kontakt1 Telefon | Kontakt2 Name | Kontakt2 Funktion | Kontakt2 E-Mail | Kontakt2 Telefon | PA Name | PA Sektor | PA Rating | PA Headquarters | PA Website | PA Last Meeting
+                            GP Name | Strategy | Rating | Sektor | Headquarters | Website | Last Meeting | Next Raise Estimate | Kontakt1 Name | Kontakt1 Funktion | Kontakt1 E-Mail | Kontakt1 Telefon | Kontakt2 Name | Kontakt2 Funktion | Kontakt2 E-Mail | Kontakt2 Telefon | PA Name | PA Rating | PA Headquarters | PA Website | PA Last Meeting | PA Kontakt1 Name | PA Kontakt1 Funktion | PA Kontakt1 E-Mail | PA Kontakt1 Telefon
                             ```
                         
                             **Zeile 2:** GP-Werte (inkl. Placement Agent Daten)
@@ -1433,8 +1475,6 @@ def show_main_app():
                                     # Placement Agent Felder
                                     elif 'pa name' in header_lower or 'placement agent name' in header_lower:
                                         gp_col_map['pa_name'] = i
-                                    elif 'pa sektor' in header_lower or 'pa sector' in header_lower:
-                                        gp_col_map['pa_sector'] = i
                                     elif 'pa rating' in header_lower:
                                         gp_col_map['pa_rating'] = i
                                     elif 'pa headquarters' in header_lower or 'pa hq' in header_lower:
@@ -1443,6 +1483,14 @@ def show_main_app():
                                         gp_col_map['pa_website'] = i
                                     elif 'pa last meeting' in header_lower:
                                         gp_col_map['pa_last_meeting'] = i
+                                    elif 'pa kontakt1 name' in header_lower or 'pa kontaktperson 1 name' in header_lower:
+                                        gp_col_map['pa_contact1_name'] = i
+                                    elif 'pa kontakt1 funktion' in header_lower or 'pa kontaktperson 1 funktion' in header_lower:
+                                        gp_col_map['pa_contact1_function'] = i
+                                    elif 'pa kontakt1 e-mail' in header_lower or 'pa kontaktperson 1 e-mail' in header_lower:
+                                        gp_col_map['pa_contact1_email'] = i
+                                    elif 'pa kontakt1 telefon' in header_lower or 'pa kontaktperson 1 telefon' in header_lower:
+                                        gp_col_map['pa_contact1_phone'] = i
                             
                                 # GP-Werte extrahieren
                                 def get_gp_val(key):
@@ -1474,11 +1522,14 @@ def show_main_app():
                                 # Placement Agent Daten extrahieren
                                 pa_data = {
                                     'pa_name': get_gp_val('pa_name'),
-                                    'sector': get_gp_val('pa_sector'),
                                     'rating': get_gp_val('pa_rating'),
                                     'headquarters': get_gp_val('pa_headquarters'),
                                     'website': get_gp_val('pa_website'),
                                     'last_meeting': get_gp_val('pa_last_meeting'),
+                                    'contact1_name': get_gp_val('pa_contact1_name'),
+                                    'contact1_function': get_gp_val('pa_contact1_function'),
+                                    'contact1_email': get_gp_val('pa_contact1_email'),
+                                    'contact1_phone': get_gp_val('pa_contact1_phone'),
                                 }
                             
                                 if not gp_data['gp_name']:
@@ -1946,7 +1997,8 @@ def show_main_app():
                                                     pa_id = existing_pa[0]
                                                     update_fields = []
                                                     update_values = []
-                                                    for field in ['sector', 'rating', 'headquarters', 'website', 'last_meeting']:
+                                                    for field in ['rating', 'headquarters', 'website', 'last_meeting',
+                                                                 'contact1_name', 'contact1_function', 'contact1_email', 'contact1_phone']:
                                                         if pa_data.get(field):
                                                             update_fields.append(f"{field} = %s")
                                                             update_values.append(pa_data[field])
@@ -1959,11 +2011,14 @@ def show_main_app():
                                                         """, update_values)
                                                 else:
                                                     cursor.execute("""
-                                                    INSERT INTO placement_agents (pa_name, sector, rating, headquarters, website, last_meeting)
-                                                    VALUES (%s, %s, %s, %s, %s, %s)
+                                                    INSERT INTO placement_agents (pa_name, rating, headquarters, website, last_meeting,
+                                                                                  contact1_name, contact1_function, contact1_email, contact1_phone)
+                                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                                                     RETURNING pa_id
-                                                    """, (pa_data['pa_name'], pa_data.get('sector'), pa_data.get('rating'),
-                                                         pa_data.get('headquarters'), pa_data.get('website'), pa_data.get('last_meeting')))
+                                                    """, (pa_data['pa_name'], pa_data.get('rating'),
+                                                         pa_data.get('headquarters'), pa_data.get('website'), pa_data.get('last_meeting'),
+                                                         pa_data.get('contact1_name'), pa_data.get('contact1_function'),
+                                                         pa_data.get('contact1_email'), pa_data.get('contact1_phone')))
                                                     pa_id = cursor.fetchone()[0]
                                         
                                             imported_funds = 0
@@ -2634,42 +2689,46 @@ def show_main_app():
                             cursor.execute("SELECT pa_id, pa_name FROM placement_agents ORDER BY pa_name")
                             pa_list = cursor.fetchall()
                         
-                        if not pa_list:
-                            st.info("Keine Placement Agents vorhanden. Erstelle einen neuen!")
+                        # Immer "(Neu erstellen)" als Option anbieten
+                        pa_dict = {pa[1]: pa[0] for pa in pa_list} if pa_list else {}
+                        edit_pa_name = st.selectbox("Placement Agent auswählen", options=["(Neu erstellen)"] + list(pa_dict.keys()), key="edit_pa_select")
+                        
+                        if edit_pa_name != "(Neu erstellen)":
+                            edit_pa_id = pa_dict[edit_pa_name]
+                            with conn.cursor() as cursor:
+                                cursor.execute("SELECT * FROM placement_agents WHERE pa_id = %s", (edit_pa_id,))
+                                pa_data_row = cursor.fetchone()
+                                pa_columns = [desc[0] for desc in cursor.description]
+                                pa_info = dict(zip(pa_columns, pa_data_row))
                         else:
-                            pa_dict = {pa[1]: pa[0] for pa in pa_list}
-                            edit_pa_name = st.selectbox("Placement Agent auswählen", options=["(Neu erstellen)"] + list(pa_dict.keys()), key="edit_pa_select")
-                            
-                            if edit_pa_name != "(Neu erstellen)":
-                                edit_pa_id = pa_dict[edit_pa_name]
-                                with conn.cursor() as cursor:
-                                    cursor.execute("SELECT * FROM placement_agents WHERE pa_id = %s", (edit_pa_id,))
-                                    pa_data = cursor.fetchone()
-                                    pa_columns = [desc[0] for desc in cursor.description]
-                                    pa_info = dict(zip(pa_columns, pa_data))
-                            else:
-                                edit_pa_id = None
-                                pa_info = {}
+                            edit_pa_id = None
+                            pa_info = {}
                         
                         col1, col2 = st.columns(2)
                         with col1:
-                            new_pa_name = st.text_input("PA Name", value=pa_info.get('pa_name', ''), key="new_pa_name")
-                            new_pa_sector = st.text_input("Sektor", value=pa_info.get('sector') or '', key="new_pa_sector")
+                            new_pa_name = st.text_input("PA Name *", value=pa_info.get('pa_name', ''), key="new_pa_name")
                             new_pa_rating = st.text_input("Rating", value=pa_info.get('rating') or '', key="new_pa_rating")
-                        with col2:
                             new_pa_hq = st.text_input("Headquarters", value=pa_info.get('headquarters') or '', key="new_pa_hq")
                             new_pa_website = st.text_input("Website", value=pa_info.get('website') or '', key="new_pa_website")
                             pa_last_meeting = pa_info.get('last_meeting')
                             new_pa_last_meeting = st.date_input("Last Meeting", value=pa_last_meeting if pa_last_meeting else None, key="new_pa_last_meeting")
+                        with col2:
+                            st.markdown("**Kontaktperson**")
+                            new_pa_contact1_name = st.text_input("Kontakt Name", value=pa_info.get('contact1_name') or '', key="new_pa_contact1_name")
+                            new_pa_contact1_function = st.text_input("Kontakt Funktion", value=pa_info.get('contact1_function') or '', key="new_pa_contact1_function")
+                            new_pa_contact1_email = st.text_input("Kontakt E-Mail", value=pa_info.get('contact1_email') or '', key="new_pa_contact1_email")
+                            new_pa_contact1_phone = st.text_input("Kontakt Telefon", value=pa_info.get('contact1_phone') or '', key="new_pa_contact1_phone")
                         
                         if st.button("💾 Placement Agent speichern", type="primary", key="save_pa_btn"):
                             if new_pa_name:
                                 with conn.cursor() as cursor:
                                     if edit_pa_id:
                                         cursor.execute("""
-                                        UPDATE placement_agents SET pa_name = %s, sector = %s, rating = %s, headquarters = %s, website = %s, last_meeting = %s, updated_at = CURRENT_TIMESTAMP
+                                        UPDATE placement_agents SET pa_name = %s, rating = %s, headquarters = %s, website = %s, last_meeting = %s,
+                                               contact1_name = %s, contact1_function = %s, contact1_email = %s, contact1_phone = %s, updated_at = CURRENT_TIMESTAMP
                                         WHERE pa_id = %s
-                                        """, (new_pa_name, new_pa_sector or None, new_pa_rating or None, new_pa_hq or None, new_pa_website or None, new_pa_last_meeting, edit_pa_id))
+                                        """, (new_pa_name, new_pa_rating or None, new_pa_hq or None, new_pa_website or None, new_pa_last_meeting,
+                                             new_pa_contact1_name or None, new_pa_contact1_function or None, new_pa_contact1_email or None, new_pa_contact1_phone or None, edit_pa_id))
                                         conn.commit()
                                         clear_cache()
                                         st.success(f"✅ Placement Agent '{new_pa_name}' aktualisiert!")
@@ -2681,9 +2740,11 @@ def show_main_app():
                                             st.error("Ein Placement Agent mit diesem Namen existiert bereits!")
                                         else:
                                             cursor.execute("""
-                                            INSERT INTO placement_agents (pa_name, sector, rating, headquarters, website, last_meeting)
-                                            VALUES (%s, %s, %s, %s, %s, %s)
-                                            """, (new_pa_name, new_pa_sector or None, new_pa_rating or None, new_pa_hq or None, new_pa_website or None, new_pa_last_meeting))
+                                            INSERT INTO placement_agents (pa_name, rating, headquarters, website, last_meeting,
+                                                                          contact1_name, contact1_function, contact1_email, contact1_phone)
+                                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                            """, (new_pa_name, new_pa_rating or None, new_pa_hq or None, new_pa_website or None, new_pa_last_meeting,
+                                                 new_pa_contact1_name or None, new_pa_contact1_function or None, new_pa_contact1_email or None, new_pa_contact1_phone or None))
                                             conn.commit()
                                             clear_cache()
                                             st.success(f"✅ Placement Agent '{new_pa_name}' erstellt!")
