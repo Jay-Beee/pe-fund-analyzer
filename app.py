@@ -205,6 +205,26 @@ def ensure_gps_table(conn):
         conn.commit()
 
 
+def ensure_placement_agents_table(conn):
+    """Erstellt die Placement Agents-Tabelle falls nicht vorhanden"""
+    with conn.cursor() as cursor:
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS placement_agents (
+            pa_id SERIAL PRIMARY KEY,
+            pa_name TEXT UNIQUE NOT NULL,
+            sector TEXT,
+            headquarters TEXT,
+            website TEXT,
+            rating TEXT,
+            last_meeting DATE,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+        conn.commit()
+
+
 def ensure_funds_table(conn):
     """Erstellt die Funds-Tabelle falls nicht vorhanden"""
     with conn.cursor() as cursor:
@@ -213,6 +233,7 @@ def ensure_funds_table(conn):
             fund_id SERIAL PRIMARY KEY,
             fund_name TEXT NOT NULL,
             gp_id INTEGER REFERENCES gps(gp_id),
+            placement_agent_id INTEGER REFERENCES placement_agents(pa_id),
             vintage_year INTEGER,
             strategy TEXT,
             geography TEXT,
@@ -330,6 +351,14 @@ def ensure_currency_column(conn):
         
         if not check_column_exists(conn, 'funds', 'fund_size_m'):
             cursor.execute("ALTER TABLE funds ADD COLUMN fund_size_m REAL")
+            conn.commit()
+
+
+def ensure_placement_agent_column(conn):
+    """Fügt die Placement Agent Spalte zu Funds hinzu falls nicht vorhanden"""
+    with conn.cursor() as cursor:
+        if not check_column_exists(conn, 'funds', 'placement_agent_id'):
+            cursor.execute("ALTER TABLE funds ADD COLUMN placement_agent_id INTEGER REFERENCES placement_agents(pa_id)")
             conn.commit()
 
 
@@ -452,6 +481,23 @@ def get_or_create_gp(conn, gp_name):
             return result[0]
         
         cursor.execute("INSERT INTO gps (gp_name) VALUES (%s) RETURNING gp_id", (gp_name,))
+        conn.commit()
+        return cursor.fetchone()[0]
+
+
+def get_or_create_placement_agent(conn, pa_name):
+    """Holt oder erstellt einen Placement Agent anhand des Namens"""
+    if not pa_name or pa_name.strip() == '':
+        return None
+    
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT pa_id FROM placement_agents WHERE pa_name = %s", (pa_name,))
+        result = cursor.fetchone()
+        
+        if result:
+            return result[0]
+        
+        cursor.execute("INSERT INTO placement_agents (pa_name) VALUES (%s) RETURNING pa_id", (pa_name,))
         conn.commit()
         return cursor.fetchone()[0]
 
@@ -617,9 +663,10 @@ def create_mekko_chart(fund_id, fund_name, conn, reporting_date=None):
 def load_all_funds(conn):
     query = """
     SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
-           f.currency, m.total_tvpi, m.dpi, m.top5_value_concentration, m.loss_ratio
+           f.currency, pa.pa_name, m.total_tvpi, m.dpi, m.top5_value_concentration, m.loss_ratio
     FROM funds f
     LEFT JOIN gps g ON f.gp_id = g.gp_id
+    LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
     LEFT JOIN fund_metrics m ON f.fund_id = m.fund_id
     WHERE f.fund_id IS NOT NULL 
     ORDER BY f.fund_id, f.fund_name
@@ -631,9 +678,10 @@ def load_funds_with_history_metrics(conn, year=None, quarter_date=None):
     if quarter_date:
         query = """
         SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
-               f.currency, m.total_tvpi, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
+               f.currency, pa.pa_name, m.total_tvpi, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
         FROM funds f
         LEFT JOIN gps g ON f.gp_id = g.gp_id
+        LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
         LEFT JOIN fund_metrics_history m ON f.fund_id = m.fund_id AND m.reporting_date = %s
         WHERE f.fund_id IS NOT NULL 
         ORDER BY f.fund_id, f.fund_name
@@ -642,9 +690,10 @@ def load_funds_with_history_metrics(conn, year=None, quarter_date=None):
     elif year:
         query = """
         SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
-               f.currency, m.total_tvpi, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
+               f.currency, pa.pa_name, m.total_tvpi, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
         FROM funds f
         LEFT JOIN gps g ON f.gp_id = g.gp_id
+        LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
         LEFT JOIN (
             SELECT fund_id, MAX(reporting_date) as max_date 
             FROM fund_metrics_history
@@ -692,6 +741,7 @@ def get_quarter_end_date(input_date):
 def initialize_database(conn):
     """Initialisiert alle benötigten Tabellen"""
     ensure_gps_table(conn)
+    ensure_placement_agents_table(conn)
     ensure_funds_table(conn)
     ensure_portfolio_companies_table(conn)
     ensure_fund_metrics_table(conn)
@@ -730,6 +780,9 @@ def show_main_app():
         
         # Currency-Spalte hinzufügen falls nötig
         ensure_currency_column(conn)
+        
+        # Placement Agent Spalte hinzufügen falls nötig
+        ensure_placement_agent_column(conn)
         
         # Neue Portfolio Company Felder hinzufügen
         ensure_portfolio_company_fields(conn)
@@ -800,6 +853,13 @@ def show_main_app():
             gps = sorted(all_funds_df['gp_name'].dropna().unique())
             selected_gps = st.sidebar.multiselect("GP Name", options=gps, default=gps, key=f"gp_{fv}") if gps else []
             
+            placement_agents = sorted([pa for pa in all_funds_df['pa_name'].dropna().unique() if pa])
+            if placement_agents:
+                pa_options = ["(Alle)"] + placement_agents + ["(Ohne PA)"]
+                selected_pas = st.sidebar.multiselect("Placement Agent", options=pa_options, default=["(Alle)"], key=f"pa_{fv}")
+            else:
+                selected_pas = []
+            
             ratings = sorted(all_funds_df['rating'].dropna().unique())
             selected_ratings = st.sidebar.multiselect("Rating", options=ratings, default=ratings, key=f"rating_{fv}") if ratings else []
             
@@ -812,6 +872,12 @@ def show_main_app():
                 filtered_df = filtered_df[filtered_df['geography'].isin(selected_geographies)]
             if selected_gps:
                 filtered_df = filtered_df[filtered_df['gp_name'].isin(selected_gps)]
+            if selected_pas and "(Alle)" not in selected_pas:
+                if "(Ohne PA)" in selected_pas:
+                    pa_filter = [pa for pa in selected_pas if pa != "(Ohne PA)"]
+                    filtered_df = filtered_df[(filtered_df['pa_name'].isin(pa_filter)) | (filtered_df['pa_name'].isna())]
+                else:
+                    filtered_df = filtered_df[filtered_df['pa_name'].isin(selected_pas)]
             if selected_ratings:
                 filtered_df = filtered_df[filtered_df['rating'].isin(selected_ratings)]
             
@@ -843,10 +909,10 @@ def show_main_app():
             
             # Tabs basierend auf Rolle erstellen
             if is_admin():
-                tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Charts", "📈 Vergleichstabelle", "🏢 Portfoliounternehmen", "📋 Details", "⚙️ Admin"])
+                tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 Charts", "📈 Vergleichstabelle", "🏢 Portfoliounternehmen", "📋 Details", "🤝 Placement Agents", "⚙️ Admin"])
             else:
-                tab1, tab2, tab3, tab4 = st.tabs(["📊 Charts", "📈 Vergleichstabelle", "🏢 Portfoliounternehmen", "📋 Details"])
-                tab5 = None  # Kein Admin-Tab für normale User
+                tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Charts", "📈 Vergleichstabelle", "🏢 Portfoliounternehmen", "📋 Details", "🤝 Placement Agents"])
+                tab6 = None  # Kein Admin-Tab für normale User
             
             # TAB 1: CHARTS
             with tab1:
@@ -892,13 +958,14 @@ def show_main_app():
                     comparison_df = comparison_df.drop_duplicates(subset=['fund_id'], keep='first')
                     
                     if 'reporting_date' in comparison_df.columns and date_mode != "Aktuell":
-                        comparison_df = comparison_df[['fund_name', 'gp_name', 'vintage_year', 'strategy', 'currency', 'rating', 'total_tvpi', 'dpi', 'top5_value_concentration', 'loss_ratio', 'reporting_date']]
-                        comparison_df.columns = ['Fund', 'GP', 'Vintage', 'Strategy', 'Währung', 'Rating', 'TVPI', 'DPI', 'Top 5 Conc.', 'Loss Ratio', 'Stichtag']
+                        comparison_df = comparison_df[['fund_name', 'gp_name', 'pa_name', 'vintage_year', 'strategy', 'currency', 'rating', 'total_tvpi', 'dpi', 'top5_value_concentration', 'loss_ratio', 'reporting_date']]
+                        comparison_df.columns = ['Fund', 'GP', 'Placement Agent', 'Vintage', 'Strategy', 'Währung', 'Rating', 'TVPI', 'DPI', 'Top 5 Conc.', 'Loss Ratio', 'Stichtag']
                         comparison_df['Stichtag'] = comparison_df['Stichtag'].apply(lambda x: format_quarter(x) if pd.notna(x) else "-")
                     else:
-                        comparison_df = comparison_df[['fund_name', 'gp_name', 'vintage_year', 'strategy', 'currency', 'rating', 'total_tvpi', 'dpi', 'top5_value_concentration', 'loss_ratio']]
-                        comparison_df.columns = ['Fund', 'GP', 'Vintage', 'Strategy', 'Währung', 'Rating', 'TVPI', 'DPI', 'Top 5 Conc.', 'Loss Ratio']
+                        comparison_df = comparison_df[['fund_name', 'gp_name', 'pa_name', 'vintage_year', 'strategy', 'currency', 'rating', 'total_tvpi', 'dpi', 'top5_value_concentration', 'loss_ratio']]
+                        comparison_df.columns = ['Fund', 'GP', 'Placement Agent', 'Vintage', 'Strategy', 'Währung', 'Rating', 'TVPI', 'DPI', 'Top 5 Conc.', 'Loss Ratio']
                     
+                    comparison_df['Placement Agent'] = comparison_df['Placement Agent'].apply(lambda x: x if pd.notna(x) else "-")
                     comparison_df['Währung'] = comparison_df['Währung'].apply(lambda x: x if pd.notna(x) else "-")
                     comparison_df['TVPI'] = comparison_df['TVPI'].apply(lambda x: f"{x:.2f}x" if pd.notna(x) else "-")
                     comparison_df['DPI'] = comparison_df['DPI'].apply(lambda x: f"{x:.2f}x" if pd.notna(x) else "-")
@@ -1020,8 +1087,11 @@ def show_main_app():
                         
                         with st.expander(f"📂 {fund_name}" + (f" ({report_date})" if report_date else ""), expanded=True):
                             fund_info = pd.read_sql_query("""
-                            SELECT g.gp_name, f.vintage_year, f.fund_size_m, f.currency, f.strategy, f.geography, g.rating, g.last_meeting, g.next_raise_estimate
-                            FROM funds f LEFT JOIN gps g ON f.gp_id = g.gp_id WHERE f.fund_id = %s
+                            SELECT g.gp_name, f.vintage_year, f.fund_size_m, f.currency, f.strategy, f.geography, g.rating, g.last_meeting, g.next_raise_estimate, pa.pa_name
+                            FROM funds f 
+                            LEFT JOIN gps g ON f.gp_id = g.gp_id 
+                            LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
+                            WHERE f.fund_id = %s
                             """, conn, params=(fund_id,))
                             
                             if report_date:
@@ -1030,7 +1100,7 @@ def show_main_app():
                                 metrics = pd.read_sql_query("SELECT total_tvpi, dpi, num_investments FROM fund_metrics WHERE fund_id = %s", conn, params=(fund_id,))
                             
                             if not fund_info.empty:
-                                col1, col2, col3, col4 = st.columns(4)
+                                col1, col2, col3, col4, col5 = st.columns(5)
                                 with col1:
                                     st.metric("GP", fund_info['gp_name'].iloc[0] or "N/A")
                                     st.metric("Vintage", int(fund_info['vintage_year'].iloc[0]) if pd.notna(fund_info['vintage_year'].iloc[0]) else "N/A")
@@ -1044,7 +1114,9 @@ def show_main_app():
                                     st.metric("Währung", fund_info['currency'].iloc[0] or "N/A")
                                     fund_size = fund_info['fund_size_m'].iloc[0]
                                     currency = fund_info['currency'].iloc[0] or ""
-                                    st.metric("Fund Size", f"{currency} {fund_size:,.0f}m" if pd.notna(fund_size) else "N/A")
+                                    st.metric("Fund Size", f"{fund_size:,.0f} Mio. {currency}" if pd.notna(fund_size) else "N/A")
+                                with col5:
+                                    st.metric("Placement Agent", fund_info['pa_name'].iloc[0] or "N/A")
                                 
                                 st.subheader("Portfolio Companies")
                                 if report_date:
@@ -1118,9 +1190,67 @@ def show_main_app():
                                 st.info("Keine historischen Daten vorhanden.")
                             st.markdown("---")
             
-            # TAB 5: ADMIN (nur für Admins sichtbar)
-            if is_admin() and tab5 is not None:
-                with tab5:
+            # TAB 5: PLACEMENT AGENTS
+            with tab5:
+                st.header("🤝 Placement Agents")
+                
+                # Alle Placement Agents laden
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                    SELECT pa.pa_id, pa.pa_name, pa.sector, pa.headquarters, pa.website, pa.rating, pa.last_meeting,
+                           COUNT(f.fund_id) as fund_count,
+                           STRING_AGG(f.fund_name, ', ' ORDER BY f.fund_name) as funds
+                    FROM placement_agents pa
+                    LEFT JOIN funds f ON pa.pa_id = f.placement_agent_id
+                    GROUP BY pa.pa_id, pa.pa_name, pa.sector, pa.headquarters, pa.website, pa.rating, pa.last_meeting
+                    ORDER BY pa.pa_name
+                    """)
+                    all_pas = cursor.fetchall()
+                
+                if not all_pas:
+                    st.info("ℹ️ Keine Placement Agents vorhanden. Placement Agents können im Admin-Tab erstellt oder über Excel importiert werden.")
+                else:
+                    # Übersichtstabelle
+                    pa_df = pd.DataFrame(all_pas, columns=['ID', 'Name', 'Sektor', 'Headquarters', 'Website', 'Rating', 'Last Meeting', 'Anzahl Fonds', 'Zugeordnete Fonds'])
+                    pa_df['Last Meeting'] = pa_df['Last Meeting'].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) and x else "-")
+                    pa_df['Zugeordnete Fonds'] = pa_df['Zugeordnete Fonds'].apply(lambda x: x if x else "-")
+                    
+                    st.dataframe(
+                        pa_df[['Name', 'Sektor', 'Headquarters', 'Rating', 'Last Meeting', 'Anzahl Fonds', 'Zugeordnete Fonds']],
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                    
+                    st.markdown("---")
+                    
+                    # Detailansicht für ausgewählten PA
+                    pa_names = [pa[1] for pa in all_pas]
+                    selected_pa_name = st.selectbox("📋 Placement Agent Details anzeigen", options=["(Auswählen)"] + pa_names, key="pa_detail_select")
+                    
+                    if selected_pa_name != "(Auswählen)":
+                        selected_pa = next((pa for pa in all_pas if pa[1] == selected_pa_name), None)
+                        if selected_pa:
+                            st.subheader(f"📋 {selected_pa_name}")
+                            
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Sektor", selected_pa[2] or "N/A")
+                                st.metric("Rating", selected_pa[5] or "N/A")
+                            with col2:
+                                st.metric("Headquarters", selected_pa[3] or "N/A")
+                                st.metric("Last Meeting", selected_pa[6].strftime('%Y-%m-%d') if selected_pa[6] else "N/A")
+                            with col3:
+                                st.metric("Website", selected_pa[4] or "N/A")
+                                st.metric("Anzahl Fonds", selected_pa[7])
+                            
+                            if selected_pa[8]:
+                                st.markdown("**Zugeordnete Fonds:**")
+                                for fund in selected_pa[8].split(', '):
+                                    st.markdown(f"- {fund}")
+            
+            # TAB 6: ADMIN (nur für Admins sichtbar)
+            if is_admin() and tab6 is not None:
+                with tab6:
                     st.header("⚙️ Fund & GP Management")
                     
                     # Stichtag-Verwaltung
@@ -1214,7 +1344,7 @@ def show_main_app():
                     st.markdown("---")
                     
                     # Admin Tabs
-                    admin_tab1, admin_tab2, admin_tab3, admin_tab4, admin_tab5, admin_tab6 = st.tabs(["➕ Import Excel", "🏢 Edit Portfolio Company", "✏️ Edit Fund", "👔 Edit GP", "🗑️ Delete Fund", "🗑️ Delete GP"])
+                    admin_tab1, admin_tab2, admin_tab3, admin_tab4, admin_tab5, admin_tab6, admin_tab7, admin_tab8 = st.tabs(["➕ Import Excel", "🏢 Edit Portfolio Company", "✏️ Edit Fund", "👔 Edit GP", "🤝 Edit Placement Agent", "🗑️ Delete Fund", "🗑️ Delete GP", "🗑️ Delete Placement Agent"])
                 
                     # IMPORT EXCEL
                     with admin_tab1:
@@ -1225,10 +1355,10 @@ def show_main_app():
                             st.markdown("""
                             **Zeile 1 (GP Header):**
                             ```
-                            GP Name | Strategy | Rating | Sektor | Headquarters | Website | Last Meeting | Next Raise Estimate | Kontakt1 Name | Kontakt1 Funktion | Kontakt1 E-Mail | Kontakt1 Telefon | Kontakt2 Name | Kontakt2 Funktion | Kontakt2 E-Mail | Kontakt2 Telefon
+                            GP Name | Strategy | Rating | Sektor | Headquarters | Website | Last Meeting | Next Raise Estimate | Kontakt1 Name | Kontakt1 Funktion | Kontakt1 E-Mail | Kontakt1 Telefon | Kontakt2 Name | Kontakt2 Funktion | Kontakt2 E-Mail | Kontakt2 Telefon | PA Name | PA Sektor | PA Rating | PA Headquarters | PA Website | PA Last Meeting
                             ```
                         
-                            **Zeile 2:** GP-Werte
+                            **Zeile 2:** GP-Werte (inkl. Placement Agent Daten)
                         
                             **Zeile 3:** [Leer]
                         
@@ -1243,6 +1373,7 @@ def show_main_app():
                             - Leere Zellen = Bestehende Daten bleiben erhalten
                             - Datumsformat: YYYY-MM-DD oder YYYY-MM
                             - Fund-Metadaten (Vintage, Size, etc.) nur bei erster Zeile pro Fund nötig
+                            - Placement Agent ist optional - wenn PA Name leer, wird kein PA zugeordnet
                             """)
                     
                         uploaded_file = st.file_uploader("Excel-Datei hochladen", type=['xlsx'], key="excel_upload")
@@ -1269,17 +1400,17 @@ def show_main_app():
                                     header_lower = header.lower()
                                     if 'gp name' in header_lower or header_lower == 'gp':
                                         gp_col_map['gp_name'] = i
-                                    elif 'strategy' in header_lower:
+                                    elif header_lower == 'strategy' or (header_lower.startswith('strategy') and 'pa' not in header_lower):
                                         gp_col_map['strategy'] = i
-                                    elif 'rating' in header_lower:
+                                    elif header_lower == 'rating' or (header_lower.startswith('rating') and 'pa' not in header_lower):
                                         gp_col_map['rating'] = i
-                                    elif 'sektor' in header_lower or 'sector' in header_lower:
+                                    elif ('sektor' in header_lower or 'sector' in header_lower) and 'pa' not in header_lower:
                                         gp_col_map['sector'] = i
-                                    elif 'headquarters' in header_lower or 'hq' in header_lower:
+                                    elif ('headquarters' in header_lower or 'hq' in header_lower) and 'pa' not in header_lower:
                                         gp_col_map['headquarters'] = i
-                                    elif 'website' in header_lower:
+                                    elif 'website' in header_lower and 'pa' not in header_lower:
                                         gp_col_map['website'] = i
-                                    elif 'last meeting' in header_lower:
+                                    elif 'last meeting' in header_lower and 'pa' not in header_lower:
                                         gp_col_map['last_meeting'] = i
                                     elif 'next raise' in header_lower:
                                         gp_col_map['next_raise_estimate'] = i
@@ -1299,6 +1430,19 @@ def show_main_app():
                                         gp_col_map['contact2_email'] = i
                                     elif 'kontakt2 telefon' in header_lower or 'kontaktperson 2 telefon' in header_lower:
                                         gp_col_map['contact2_phone'] = i
+                                    # Placement Agent Felder
+                                    elif 'pa name' in header_lower or 'placement agent name' in header_lower:
+                                        gp_col_map['pa_name'] = i
+                                    elif 'pa sektor' in header_lower or 'pa sector' in header_lower:
+                                        gp_col_map['pa_sector'] = i
+                                    elif 'pa rating' in header_lower:
+                                        gp_col_map['pa_rating'] = i
+                                    elif 'pa headquarters' in header_lower or 'pa hq' in header_lower:
+                                        gp_col_map['pa_headquarters'] = i
+                                    elif 'pa website' in header_lower:
+                                        gp_col_map['pa_website'] = i
+                                    elif 'pa last meeting' in header_lower:
+                                        gp_col_map['pa_last_meeting'] = i
                             
                                 # GP-Werte extrahieren
                                 def get_gp_val(key):
@@ -1325,6 +1469,16 @@ def show_main_app():
                                     'contact2_function': get_gp_val('contact2_function'),
                                     'contact2_email': get_gp_val('contact2_email'),
                                     'contact2_phone': get_gp_val('contact2_phone'),
+                                }
+                                
+                                # Placement Agent Daten extrahieren
+                                pa_data = {
+                                    'pa_name': get_gp_val('pa_name'),
+                                    'sector': get_gp_val('pa_sector'),
+                                    'rating': get_gp_val('pa_rating'),
+                                    'headquarters': get_gp_val('pa_headquarters'),
+                                    'website': get_gp_val('pa_website'),
+                                    'last_meeting': get_gp_val('pa_last_meeting'),
                                 }
                             
                                 if not gp_data['gp_name']:
@@ -1538,6 +1692,7 @@ def show_main_app():
                             
                                 st.session_state.import_data = {
                                     'gp_data': gp_data,
+                                    'pa_data': pa_data,
                                     'funds_data': funds_data,
                                     'changes': changes
                                 }
@@ -1558,6 +1713,8 @@ def show_main_app():
                             st.subheader("📋 Import-Vorschau")
                         
                             st.markdown(f"**GP:** {data['gp_data']['gp_name']}")
+                            if data['pa_data'].get('pa_name'):
+                                st.markdown(f"**Placement Agent:** {data['pa_data']['pa_name']}")
                         
                             fund_names = list(data['funds_data'].keys())
                             total_companies = sum(len(f['companies']) for f in data['funds_data'].values())
@@ -1733,6 +1890,7 @@ def show_main_app():
                                     try:
                                         with conn.cursor() as cursor:
                                             gp_data = data['gp_data']
+                                            pa_data = data['pa_data']
                                             funds_data = data['funds_data']
                                             selected = st.session_state.selected_changes
                                         
@@ -1777,6 +1935,36 @@ def show_main_app():
                                                      gp_data.get('contact2_name'), gp_data.get('contact2_function'),
                                                      gp_data.get('contact2_email'), gp_data.get('contact2_phone')))
                                                 gp_id = cursor.fetchone()[0]
+                                            
+                                            # Placement Agent anlegen/aktualisieren (falls vorhanden)
+                                            pa_id = None
+                                            if pa_data.get('pa_name'):
+                                                cursor.execute("SELECT pa_id FROM placement_agents WHERE pa_name = %s", (pa_data['pa_name'],))
+                                                existing_pa = cursor.fetchone()
+                                                
+                                                if existing_pa:
+                                                    pa_id = existing_pa[0]
+                                                    update_fields = []
+                                                    update_values = []
+                                                    for field in ['sector', 'rating', 'headquarters', 'website', 'last_meeting']:
+                                                        if pa_data.get(field):
+                                                            update_fields.append(f"{field} = %s")
+                                                            update_values.append(pa_data[field])
+                                                    
+                                                    if update_fields:
+                                                        update_values.append(pa_id)
+                                                        cursor.execute(f"""
+                                                        UPDATE placement_agents SET {', '.join(update_fields)}, updated_at = CURRENT_TIMESTAMP
+                                                        WHERE pa_id = %s
+                                                        """, update_values)
+                                                else:
+                                                    cursor.execute("""
+                                                    INSERT INTO placement_agents (pa_name, sector, rating, headquarters, website, last_meeting)
+                                                    VALUES (%s, %s, %s, %s, %s, %s)
+                                                    RETURNING pa_id
+                                                    """, (pa_data['pa_name'], pa_data.get('sector'), pa_data.get('rating'),
+                                                         pa_data.get('headquarters'), pa_data.get('website'), pa_data.get('last_meeting')))
+                                                    pa_id = cursor.fetchone()[0]
                                         
                                             imported_funds = 0
                                             imported_companies = 0
@@ -1795,6 +1983,11 @@ def show_main_app():
                                                     fund_id = existing_fund[0]
                                                     update_fields = ['gp_id = %s']
                                                     update_values = [gp_id]
+                                                    
+                                                    # Placement Agent verknüpfen
+                                                    if pa_id:
+                                                        update_fields.append('placement_agent_id = %s')
+                                                        update_values.append(pa_id)
                                                 
                                                     if gp_data.get('strategy'):
                                                         change_key = f"{fund_name}_strategy"
@@ -1822,10 +2015,10 @@ def show_main_app():
                                                     """, update_values)
                                                 else:
                                                     cursor.execute("""
-                                                    INSERT INTO funds (fund_name, gp_id, strategy, vintage_year, fund_size_m, currency, geography)
-                                                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                                    INSERT INTO funds (fund_name, gp_id, placement_agent_id, strategy, vintage_year, fund_size_m, currency, geography)
+                                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                                                     RETURNING fund_id
-                                                    """, (fund_name, gp_id, gp_data.get('strategy'),
+                                                    """, (fund_name, gp_id, pa_id, gp_data.get('strategy'),
                                                          fund_info['metadata'].get('vintage_year'),
                                                          fund_info['metadata'].get('fund_size_m'), fund_info['metadata'].get('currency'),
                                                          fund_info['metadata'].get('geography')))
@@ -2433,8 +2626,74 @@ def show_main_app():
                                 else:
                                     st.error("Bitte GP Namen eingeben!")
                 
-                    # DELETE FUND
+                    # EDIT PLACEMENT AGENT
                     with admin_tab5:
+                        st.subheader("🤝 Placement Agent bearbeiten")
+                        
+                        with conn.cursor() as cursor:
+                            cursor.execute("SELECT pa_id, pa_name FROM placement_agents ORDER BY pa_name")
+                            pa_list = cursor.fetchall()
+                        
+                        if not pa_list:
+                            st.info("Keine Placement Agents vorhanden. Erstelle einen neuen!")
+                        else:
+                            pa_dict = {pa[1]: pa[0] for pa in pa_list}
+                            edit_pa_name = st.selectbox("Placement Agent auswählen", options=["(Neu erstellen)"] + list(pa_dict.keys()), key="edit_pa_select")
+                            
+                            if edit_pa_name != "(Neu erstellen)":
+                                edit_pa_id = pa_dict[edit_pa_name]
+                                with conn.cursor() as cursor:
+                                    cursor.execute("SELECT * FROM placement_agents WHERE pa_id = %s", (edit_pa_id,))
+                                    pa_data = cursor.fetchone()
+                                    pa_columns = [desc[0] for desc in cursor.description]
+                                    pa_info = dict(zip(pa_columns, pa_data))
+                            else:
+                                edit_pa_id = None
+                                pa_info = {}
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            new_pa_name = st.text_input("PA Name", value=pa_info.get('pa_name', ''), key="new_pa_name")
+                            new_pa_sector = st.text_input("Sektor", value=pa_info.get('sector') or '', key="new_pa_sector")
+                            new_pa_rating = st.text_input("Rating", value=pa_info.get('rating') or '', key="new_pa_rating")
+                        with col2:
+                            new_pa_hq = st.text_input("Headquarters", value=pa_info.get('headquarters') or '', key="new_pa_hq")
+                            new_pa_website = st.text_input("Website", value=pa_info.get('website') or '', key="new_pa_website")
+                            pa_last_meeting = pa_info.get('last_meeting')
+                            new_pa_last_meeting = st.date_input("Last Meeting", value=pa_last_meeting if pa_last_meeting else None, key="new_pa_last_meeting")
+                        
+                        if st.button("💾 Placement Agent speichern", type="primary", key="save_pa_btn"):
+                            if new_pa_name:
+                                with conn.cursor() as cursor:
+                                    if edit_pa_id:
+                                        cursor.execute("""
+                                        UPDATE placement_agents SET pa_name = %s, sector = %s, rating = %s, headquarters = %s, website = %s, last_meeting = %s, updated_at = CURRENT_TIMESTAMP
+                                        WHERE pa_id = %s
+                                        """, (new_pa_name, new_pa_sector or None, new_pa_rating or None, new_pa_hq or None, new_pa_website or None, new_pa_last_meeting, edit_pa_id))
+                                        conn.commit()
+                                        clear_cache()
+                                        st.success(f"✅ Placement Agent '{new_pa_name}' aktualisiert!")
+                                        time.sleep(1)
+                                        st.rerun()
+                                    else:
+                                        cursor.execute("SELECT pa_id FROM placement_agents WHERE pa_name = %s", (new_pa_name,))
+                                        if cursor.fetchone():
+                                            st.error("Ein Placement Agent mit diesem Namen existiert bereits!")
+                                        else:
+                                            cursor.execute("""
+                                            INSERT INTO placement_agents (pa_name, sector, rating, headquarters, website, last_meeting)
+                                            VALUES (%s, %s, %s, %s, %s, %s)
+                                            """, (new_pa_name, new_pa_sector or None, new_pa_rating or None, new_pa_hq or None, new_pa_website or None, new_pa_last_meeting))
+                                            conn.commit()
+                                            clear_cache()
+                                            st.success(f"✅ Placement Agent '{new_pa_name}' erstellt!")
+                                            time.sleep(1)
+                                            st.rerun()
+                            else:
+                                st.error("Bitte PA Namen eingeben!")
+                
+                    # DELETE FUND
+                    with admin_tab6:
                         st.subheader("Fund löschen")
                         st.warning("⚠️ Diese Aktion kann nicht rückgängig gemacht werden!")
                     
@@ -2465,7 +2724,7 @@ def show_main_app():
                                     st.rerun()
                 
                     # DELETE GP
-                    with admin_tab6:
+                    with admin_tab7:
                         st.subheader("GP löschen")
                         st.warning("⚠️ Diese Aktion kann nicht rückgängig gemacht werden!")
                     
@@ -2497,6 +2756,42 @@ def show_main_app():
                                         st.success(f"✅ GP '{delete_gp_name}' gelöscht!")
                                         time.sleep(1)
                                         st.rerun()
+                    
+                    # DELETE PLACEMENT AGENT
+                    with admin_tab8:
+                        st.subheader("Placement Agent löschen")
+                        st.warning("⚠️ Diese Aktion kann nicht rückgängig gemacht werden!")
+                    
+                        with conn.cursor() as cursor:
+                            cursor.execute("SELECT pa_id, pa_name FROM placement_agents ORDER BY pa_name")
+                            delete_pa_list = cursor.fetchall()
+                    
+                        if delete_pa_list:
+                            delete_pa_dict = {pa[1]: pa[0] for pa in delete_pa_list}
+                            delete_pa_name = st.selectbox("Placement Agent zum Löschen", options=list(delete_pa_dict.keys()), key="delete_pa_select")
+                        
+                            if delete_pa_name:
+                                delete_pa_id = delete_pa_dict[delete_pa_name]
+                            
+                                with conn.cursor() as cursor:
+                                    cursor.execute("SELECT COUNT(*) FROM funds WHERE placement_agent_id = %s", (delete_pa_id,))
+                                    pa_fund_count = cursor.fetchone()[0]
+                            
+                                if pa_fund_count > 0:
+                                    st.error(f"❌ Dieser Placement Agent hat noch {pa_fund_count} zugeordnete Fonds! Bitte erst die Fonds einem anderen PA zuordnen oder die Zuordnung entfernen.")
+                                else:
+                                    confirm_delete_pa = st.checkbox(f"Ich bestätige, dass ich '{delete_pa_name}' löschen möchte", key="confirm_delete_pa")
+                                
+                                    if confirm_delete_pa and st.button("🗑️ Placement Agent LÖSCHEN", type="primary", key="delete_pa_btn"):
+                                        with conn.cursor() as cursor:
+                                            cursor.execute("DELETE FROM placement_agents WHERE pa_id = %s", (delete_pa_id,))
+                                            conn.commit()
+                                        clear_cache()
+                                        st.success(f"✅ Placement Agent '{delete_pa_name}' gelöscht!")
+                                        time.sleep(1)
+                                        st.rerun()
+                        else:
+                            st.info("Keine Placement Agents vorhanden.")
 
     except psycopg2.Error as e:
         st.error(f"❌ Datenbankfehler: {e}")
@@ -2506,7 +2801,7 @@ def show_main_app():
             conn.close()
 
     st.sidebar.markdown("---")
-    st.sidebar.markdown("**PE Fund Analyzer v4.1**")
+    st.sidebar.markdown("**PE Fund Analyzer v4.2**")
     st.sidebar.markdown("🔐 Mit Supabase Auth & Rollen")
 
 
