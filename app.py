@@ -1114,7 +1114,7 @@ def show_main_app():
                         
                         with st.expander(f"📂 {fund_name}" + (f" ({report_date})" if report_date else ""), expanded=True):
                             fund_info = pd.read_sql_query("""
-                            SELECT g.gp_name, f.vintage_year, f.fund_size_m, f.currency, f.strategy, f.geography, g.rating, g.last_meeting, g.next_raise_estimate, pa.pa_name
+                            SELECT g.gp_name, f.vintage_year, f.fund_size_m, f.currency, f.strategy, f.geography, g.rating, g.last_meeting, g.next_raise_estimate, pa.pa_name, f.notes
                             FROM funds f 
                             LEFT JOIN gps g ON f.gp_id = g.gp_id 
                             LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
@@ -1216,11 +1216,17 @@ def show_main_app():
                                         ax1.grid(True, alpha=0.3)
                                         ax1.legend(lines, labels, loc='upper left')
                                         plt.tight_layout()
-                                        st.pyplot(fig)
+                                        st.pyplot(fig, use_container_width=False, bbox_inches='tight', pad_inches=0.1)
                                         plt.close()
                                 else:
                                     st.info("Keine historischen Daten vorhanden.")
-                                st.markdown("---")
+                            
+                            with co._empty:
+                                st.markdown("###📝 Notizen")
+                                notes = fund_info['notes'].iloc[0] if not fund_info.empty and pd.notna(fund_info['notes'].iloc[0]) else "Keine Notizen vorhanden"
+                                st.markdown(f{notes}")
+                                            
+                            st.markdown("---")
             
             # TAB 5: PLACEMENT AGENTS
             with tab5:
