@@ -102,7 +102,7 @@ def show_login_page():
         with st.form("login_form"):
             email = st.text_input("E-Mail", placeholder="name@firma.com")
             password = st.text_input("Passwort", type="password")
-            submit = st.form_submit_button("Anmelden", use_container_width=True)
+            submit = st.form_submit_button("Anmelden", width='stretch')
             
             if submit:
                 if email and password:
@@ -785,7 +785,7 @@ def show_main_app():
         role_badge = "🔑 Admin" if is_admin() else "👤 User"
         st.markdown(f"{role_badge}")
         st.caption(st.session_state.user_email)
-        if st.button("Abmelden", use_container_width=True):
+        if st.button("Abmelden", width='stretch'):
             logout()
             st.rerun()
     
@@ -914,11 +914,11 @@ def show_main_app():
             
             col_all, col_none = st.sidebar.columns(2)
             with col_all:
-                if st.button("✅ Alle", key=f"select_all_{fv}", use_container_width=True):
+                if st.button("✅ Alle", key=f"select_all_{fv}", width='stretch'):
                     st.session_state[f"funds_{fv}"] = list(fund_options.keys())
                     st.rerun()
             with col_none:
-                if st.button("❌ Keine", key=f"select_none_{fv}", use_container_width=True):
+                if st.button("❌ Keine", key=f"select_none_{fv}", width='stretch'):
                     st.session_state[f"funds_{fv}"] = []
                     st.rerun()
             
@@ -999,7 +999,7 @@ def show_main_app():
                     comparison_df['Top 5 Conc.'] = comparison_df['Top 5 Conc.'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "-")
                     comparison_df['Loss Ratio'] = comparison_df['Loss Ratio'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "-")
                     
-                    st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+                    st.dataframe(comparison_df, width='stretch', hide_index=True)
                     
                     csv = comparison_df.to_csv(index=False).encode('utf-8')
                     st.download_button("📥 Download als CSV", data=csv, file_name=f"fund_comparison_{pd.Timestamp.now().strftime('%Y%m%d')}.csv", mime="text/csv")
@@ -1095,7 +1095,7 @@ def show_main_app():
                             display_portfolio['Gross IRR'] = display_portfolio['Gross IRR'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "-")
                         if 'Stichtag' in display_portfolio.columns:
                             display_portfolio['Stichtag'] = display_portfolio['Stichtag'].apply(format_quarter)
-                        st.dataframe(display_portfolio, use_container_width=True, hide_index=True)
+                        st.dataframe(display_portfolio, width='stretch', hide_index=True)
                         
                         csv_portfolio = filtered_portfolio.to_csv(index=False).encode('utf-8')
                         st.download_button("📥 Download als CSV", data=csv_portfolio, file_name=f"portfolio_companies_{pd.Timestamp.now().strftime('%Y%m%d')}.csv", mime="text/csv", key="download_portfolio")
@@ -1162,7 +1162,7 @@ def show_main_app():
                                     portfolio['Total TVPI'] = portfolio['Total TVPI'].apply(lambda x: f"{x:.2f}x")
                                     portfolio['Realized'] = portfolio['Realized'].apply(lambda x: f"{x:.2f}x")
                                     portfolio['Unrealized'] = portfolio['Unrealized'].apply(lambda x: f"{x:.2f}x")
-                                    st.dataframe(portfolio, use_container_width=True, hide_index=True)
+                                    st.dataframe(portfolio, width='stretch', hide_index=True)
                                 else:
                                     st.info("Keine Portfolio Companies vorhanden")
                             
@@ -1216,7 +1216,7 @@ def show_main_app():
                                         ax1.grid(True, alpha=0.3)
                                         ax1.legend(lines, labels, loc='upper left')
                                         plt.tight_layout()
-                                        st.pyplot(fig, use_container_width=False, bbox_inches='tight', pad_inches=0.1)
+                                        st.pyplot(fig, width='content', bbox_inches='tight', pad_inches=0.1)
                                         plt.close()
                                 else:
                                     st.info("Keine historischen Daten vorhanden.")
@@ -1259,7 +1259,7 @@ def show_main_app():
                     
                     st.dataframe(
                         pa_df[['Name', 'Headquarters', 'Rating', 'Last Meeting', 'Kontakt Name', 'Anzahl Fonds', 'Zugeordnete Fonds']],
-                        use_container_width=True,
+                        width='stretch',
                         hide_index=True
                     )
                     
@@ -1320,7 +1320,7 @@ def show_main_app():
                         if fund_dates:
                             fund_dates_df = pd.DataFrame(fund_dates, columns=['Fonds', 'Stichtag', 'Anzahl Companies'])
                             fund_dates_df['Quartal'] = fund_dates_df['Stichtag'].apply(format_quarter)
-                            st.dataframe(fund_dates_df[['Fonds', 'Stichtag', 'Quartal', 'Anzahl Companies']], use_container_width=True, hide_index=True)
+                            st.dataframe(fund_dates_df[['Fonds', 'Stichtag', 'Quartal', 'Anzahl Companies']], width='stretch', hide_index=True)
                         else:
                             st.info("Keine historischen Stichtage vorhanden")
                         
