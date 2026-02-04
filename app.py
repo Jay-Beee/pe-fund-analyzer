@@ -1271,13 +1271,13 @@ def show_main_app():
                         'contact1_name': 'Kontakt 1',
                         'contact1_email': 'E-Mail 1',
                         'fund_count': 'Anzahl Fonds',
-                        'placement_agents': 'Placement Agents'
+                        'placement_agents': 'Placement Agent'
                     }
                     
                     display_df = display_gps[list(display_columns.keys())].rename(columns=display_columns)
                     display_df = display_df.fillna("-")
                     
-                    st.dataframe(display_df, use_container_width=True, hide_index=True)
+                    st.dataframe(display_df, width='stretch', hide_index=True)
                     
                     # Export als CSV
                     csv_gps = display_df.to_csv(index=False).encode('utf-8')
