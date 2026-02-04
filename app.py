@@ -1224,7 +1224,7 @@ def show_main_app():
                             with co._empty:
                                 st.markdown("###📝 Notizen")
                                 notes = fund_info['notes'].iloc[0] if not fund_info.empty and pd.notna(fund_info['notes'].iloc[0]) else "Keine Notizen vorhanden"
-                                st.markdown(f{notes}")
+                                st.markdown(f"{notes}")
                                             
                             st.markdown("---")
             
