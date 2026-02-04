@@ -2521,17 +2521,26 @@ def show_main_app():
                         
                             if edit_fund_name:
                                 edit_fund_id = fund_dict_edit[edit_fund_name]
-                                fund_data = pd.read_sql_query("SELECT fund_name, gp_id, vintage_year, strategy, geography, fund_size_m, currency, notes FROM funds WHERE fund_id = %s", conn, params=(edit_fund_id,))
+                                fund_data = pd.read_sql_query("SELECT fund_name, gp_id, placement_agent_id, vintage_year, strategy, geography, fund_size_m, currency, notes FROM funds WHERE fund_id = %s", conn, params=(edit_fund_id,))
                             
                                 with conn.cursor() as cursor:
                                     cursor.execute("SELECT gp_id, gp_name FROM gps ORDER BY gp_name")
                                     gp_list = cursor.fetchall()
+                                    cursor.execute("SELECT pa_id, pa_name FROM placement_agents ORDER BY pa_name")
+                                    pa_list = cursor.fetchall()
                             
                                 if not fund_data.empty:
                                     gp_dict = {gp[1]: gp[0] for gp in gp_list}
                                     gp_names = list(gp_dict.keys())
                                     current_gp_id = fund_data['gp_id'].iloc[0]
                                     current_gp_name = next((name for name, gid in gp_dict.items() if gid == current_gp_id), None)
+                                    
+                                    # Placement Agent Dictionary mit "(Kein PA)" Option
+                                    pa_dict = {"(Kein PA)": None}
+                                    pa_dict.update({pa[1]: pa[0] for pa in pa_list})
+                                    pa_names = list(pa_dict.keys())
+                                    current_pa_id = fund_data['placement_agent_id'].iloc[0]
+                                    current_pa_name = next((name for name, pid in pa_dict.items() if pid == current_pa_id), "(Kein PA)")
                                 
                                     with st.form(f"edit_fund_form_{edit_fund_id}"):
                                         col1, col2 = st.columns(2)
@@ -2543,6 +2552,11 @@ def show_main_app():
                                                 new_gp_id = gp_dict[selected_gp_name]
                                             else:
                                                 new_gp_id = None
+                                            # Placement Agent Dropdown
+                                            pa_index = pa_names.index(current_pa_name) if current_pa_name in pa_names else 0
+                                            selected_pa_name = st.selectbox("Placement Agent", options=pa_names, index=pa_index)
+                                            new_pa_id = pa_dict[selected_pa_name]
+                                            
                                             new_vintage = st.number_input("Vintage Year", value=int(fund_data['vintage_year'].iloc[0]) if pd.notna(fund_data['vintage_year'].iloc[0]) else 2020, min_value=1990, max_value=2030)
                                             new_strategy = st.text_input("Strategy", value=fund_data['strategy'].iloc[0] or "")
                                         with col2:
@@ -2557,9 +2571,9 @@ def show_main_app():
                                         if st.form_submit_button("💾 Speichern", type="primary"):
                                             with conn.cursor() as cursor:
                                                 cursor.execute("""
-                                                UPDATE funds SET fund_name=%s, gp_id=%s, vintage_year=%s, strategy=%s, geography=%s, 
+                                                UPDATE funds SET fund_name=%s, gp_id=%s, placement_agent_id=%s, vintage_year=%s, strategy=%s, geography=%s, 
                                                 fund_size_m=%s, currency=%s, notes=%s, updated_at=CURRENT_TIMESTAMP WHERE fund_id=%s
-                                                """, (new_fund_name, new_gp_id, new_vintage, new_strategy, new_geography, new_fund_size, new_currency, new_notes, edit_fund_id))
+                                                """, (new_fund_name, new_gp_id, new_pa_id, new_vintage, new_strategy, new_geography, new_fund_size, new_currency, new_notes, edit_fund_id))
                                                 conn.commit()
                                             clear_cache()
                                             st.success(f"✅ Fund '{new_fund_name}' aktualisiert!")
