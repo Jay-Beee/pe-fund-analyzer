@@ -2718,54 +2718,58 @@ def show_main_app():
                             edit_pa_id = None
                             pa_info = {}
                         
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            new_pa_name = st.text_input("PA Name *", value=pa_info.get('pa_name', ''), key="new_pa_name")
-                            new_pa_rating = st.text_input("Rating", value=pa_info.get('rating') or '', key="new_pa_rating")
-                            new_pa_hq = st.text_input("Headquarters", value=pa_info.get('headquarters') or '', key="new_pa_hq")
-                            new_pa_website = st.text_input("Website", value=pa_info.get('website') or '', key="new_pa_website")
-                            pa_last_meeting = pa_info.get('last_meeting')
-                            new_pa_last_meeting = st.date_input("Last Meeting", value=pa_last_meeting if pa_last_meeting else None, key="new_pa_last_meeting")
-                        with col2:
-                            st.markdown("**Kontaktperson**")
-                            new_pa_contact1_name = st.text_input("Kontakt Name", value=pa_info.get('contact1_name') or '', key="new_pa_contact1_name")
-                            new_pa_contact1_function = st.text_input("Kontakt Funktion", value=pa_info.get('contact1_function') or '', key="new_pa_contact1_function")
-                            new_pa_contact1_email = st.text_input("Kontakt E-Mail", value=pa_info.get('contact1_email') or '', key="new_pa_contact1_email")
-                            new_pa_contact1_phone = st.text_input("Kontakt Telefon", value=pa_info.get('contact1_phone') or '', key="new_pa_contact1_phone")
+                        # Formular mit dynamischem Key basierend auf ausgewähltem PA
+                        form_key = f"edit_pa_form_{edit_pa_id if edit_pa_id else 'new'}"
                         
-                        if st.button("💾 Placement Agent speichern", type="primary", key="save_pa_btn"):
-                            if new_pa_name:
-                                with conn.cursor() as cursor:
-                                    if edit_pa_id:
-                                        cursor.execute("""
-                                        UPDATE placement_agents SET pa_name = %s, rating = %s, headquarters = %s, website = %s, last_meeting = %s,
-                                               contact1_name = %s, contact1_function = %s, contact1_email = %s, contact1_phone = %s, updated_at = CURRENT_TIMESTAMP
-                                        WHERE pa_id = %s
-                                        """, (new_pa_name, new_pa_rating or None, new_pa_hq or None, new_pa_website or None, new_pa_last_meeting,
-                                             new_pa_contact1_name or None, new_pa_contact1_function or None, new_pa_contact1_email or None, new_pa_contact1_phone or None, edit_pa_id))
-                                        conn.commit()
-                                        clear_cache()
-                                        st.success(f"✅ Placement Agent '{new_pa_name}' aktualisiert!")
-                                        time.sleep(1)
-                                        st.rerun()
-                                    else:
-                                        cursor.execute("SELECT pa_id FROM placement_agents WHERE pa_name = %s", (new_pa_name,))
-                                        if cursor.fetchone():
-                                            st.error("Ein Placement Agent mit diesem Namen existiert bereits!")
-                                        else:
+                        with st.form(form_key):
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                new_pa_name = st.text_input("PA Name *", value=pa_info.get('pa_name', ''))
+                                new_pa_rating = st.text_input("Rating", value=pa_info.get('rating') or '')
+                                new_pa_hq = st.text_input("Headquarters", value=pa_info.get('headquarters') or '')
+                                new_pa_website = st.text_input("Website", value=pa_info.get('website') or '')
+                                pa_last_meeting = pa_info.get('last_meeting')
+                                new_pa_last_meeting = st.date_input("Last Meeting", value=pa_last_meeting if pa_last_meeting else None)
+                            with col2:
+                                st.markdown("**Kontaktperson**")
+                                new_pa_contact1_name = st.text_input("Kontakt Name", value=pa_info.get('contact1_name') or '')
+                                new_pa_contact1_function = st.text_input("Kontakt Funktion", value=pa_info.get('contact1_function') or '')
+                                new_pa_contact1_email = st.text_input("Kontakt E-Mail", value=pa_info.get('contact1_email') or '')
+                                new_pa_contact1_phone = st.text_input("Kontakt Telefon", value=pa_info.get('contact1_phone') or '')
+                            
+                            if st.form_submit_button("💾 Placement Agent speichern", type="primary"):
+                                if new_pa_name:
+                                    with conn.cursor() as cursor:
+                                        if edit_pa_id:
                                             cursor.execute("""
-                                            INSERT INTO placement_agents (pa_name, rating, headquarters, website, last_meeting,
-                                                                          contact1_name, contact1_function, contact1_email, contact1_phone)
-                                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                            UPDATE placement_agents SET pa_name = %s, rating = %s, headquarters = %s, website = %s, last_meeting = %s,
+                                                   contact1_name = %s, contact1_function = %s, contact1_email = %s, contact1_phone = %s, updated_at = CURRENT_TIMESTAMP
+                                            WHERE pa_id = %s
                                             """, (new_pa_name, new_pa_rating or None, new_pa_hq or None, new_pa_website or None, new_pa_last_meeting,
-                                                 new_pa_contact1_name or None, new_pa_contact1_function or None, new_pa_contact1_email or None, new_pa_contact1_phone or None))
+                                                 new_pa_contact1_name or None, new_pa_contact1_function or None, new_pa_contact1_email or None, new_pa_contact1_phone or None, edit_pa_id))
                                             conn.commit()
                                             clear_cache()
-                                            st.success(f"✅ Placement Agent '{new_pa_name}' erstellt!")
+                                            st.success(f"✅ Placement Agent '{new_pa_name}' aktualisiert!")
                                             time.sleep(1)
                                             st.rerun()
-                            else:
-                                st.error("Bitte PA Namen eingeben!")
+                                        else:
+                                            cursor.execute("SELECT pa_id FROM placement_agents WHERE pa_name = %s", (new_pa_name,))
+                                            if cursor.fetchone():
+                                                st.error("Ein Placement Agent mit diesem Namen existiert bereits!")
+                                            else:
+                                                cursor.execute("""
+                                                INSERT INTO placement_agents (pa_name, rating, headquarters, website, last_meeting,
+                                                                              contact1_name, contact1_function, contact1_email, contact1_phone)
+                                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                                """, (new_pa_name, new_pa_rating or None, new_pa_hq or None, new_pa_website or None, new_pa_last_meeting,
+                                                     new_pa_contact1_name or None, new_pa_contact1_function or None, new_pa_contact1_email or None, new_pa_contact1_phone or None))
+                                                conn.commit()
+                                                clear_cache()
+                                                st.success(f"✅ Placement Agent '{new_pa_name}' erstellt!")
+                                                time.sleep(1)
+                                                st.rerun()
+                                else:
+                                    st.error("Bitte PA Namen eingeben!")
                 
                     # DELETE FUND
                     with admin_tab6:
