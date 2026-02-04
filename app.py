@@ -121,7 +121,8 @@ def show_login_page():
 # === SESSION STATE INITIALISIERUNG ===
 if 'filter_version' not in st.session_state:
     st.session_state.filter_version = 0
-
+if 'filters_applied' not in st.session_state:
+    st.session_state.filters_applied = False
 
 @contextmanager
 def get_connection():
@@ -869,64 +870,73 @@ def show_main_app():
             fv = st.session_state.filter_version
             
             vintage_years = sorted(all_funds_df['vintage_year'].dropna().unique())
-            selected_vintages = st.sidebar.multiselect("Vintage Year", options=vintage_years, default=vintage_years, key=f"vintage_{fv}") if vintage_years else []
+            selected_vintages = st.sidebar.multiselect("Vintage Year", options=vintage_years, default=[], key=f"vintage_{fv}") if vintage_years else []
             
             strategies = sorted(all_funds_df['strategy'].dropna().unique())
-            selected_strategies = st.sidebar.multiselect("Strategy", options=strategies, default=strategies, key=f"strategy_{fv}") if strategies else []
+            selected_strategies = st.sidebar.multiselect("Strategy", options=strategies, default=[], key=f"strategy_{fv}") if strategies else []
             
             geographies = sorted(all_funds_df['geography'].dropna().unique())
-            selected_geographies = st.sidebar.multiselect("Geography", options=geographies, default=geographies, key=f"geography_{fv}") if geographies else []
+            selected_geographies = st.sidebar.multiselect("Geography", options=geographies, default=[], key=f"geography_{fv}") if geographies else []
             
             gps = sorted(all_funds_df['gp_name'].dropna().unique())
-            selected_gps = st.sidebar.multiselect("GP Name", options=gps, default=gps, key=f"gp_{fv}") if gps else []
+            selected_gps = st.sidebar.multiselect("GP Name", options=gps, default=[], key=f"gp_{fv}") if gps else []
             
             placement_agents = sorted([pa for pa in all_funds_df['pa_name'].dropna().unique() if pa])
             if placement_agents:
                 pa_options = ["(Alle)"] + placement_agents + ["(Ohne PA)"]
-                selected_pas = st.sidebar.multiselect("Placement Agent", options=pa_options, default=["(Alle)"], key=f"pa_{fv}")
+                selected_pas = st.sidebar.multiselect("Placement Agent", options=pa_options, default=[], key=f"pa_{fv}")
             else:
                 selected_pas = []
             
             ratings = sorted(all_funds_df['rating'].dropna().unique())
+            selected_ratings = st.sidebar.multiselect("Rating", options=ratings, default=[], key=f"rating_{fv}") if ratings else []
+            
+            ratings = sorted(all_funds_df['rating'].dropna().unique())
             selected_ratings = st.sidebar.multiselect("Rating", options=ratings, default=ratings, key=f"rating_{fv}") if ratings else []
             
-            filtered_df = all_funds_df.copy()
-            if selected_vintages:
-                filtered_df = filtered_df[filtered_df['vintage_year'].isin(selected_vintages)]
-            if selected_strategies:
-                filtered_df = filtered_df[filtered_df['strategy'].isin(selected_strategies)]
-            if selected_geographies:
-                filtered_df = filtered_df[filtered_df['geography'].isin(selected_geographies)]
-            if selected_gps:
-                filtered_df = filtered_df[filtered_df['gp_name'].isin(selected_gps)]
-            if selected_pas and "(Alle)" not in selected_pas:
-                if "(Ohne PA)" in selected_pas:
-                    pa_filter = [pa for pa in selected_pas if pa != "(Ohne PA)"]
-                    filtered_df = filtered_df[(filtered_df['pa_name'].isin(pa_filter)) | (filtered_df['pa_name'].isna())]
-                else:
-                    filtered_df = filtered_df[filtered_df['pa_name'].isin(selected_pas)]
-            if selected_ratings:
-                filtered_df = filtered_df[filtered_df['rating'].isin(selected_ratings)]
+# Prüfen ob mindestens ein Filter gesetzt wurde
+            any_filter_set = (
+                len(selected_vintages) > 0 or
+                len(selected_strategies) > 0 or
+                len(selected_geographies) > 0 or
+                len(selected_gps) > 0 or
+                (len(selected_pas) > 0 and "(Alle)" not in selected_pas) or
+                len(selected_ratings) > 0
+            )
             
-            st.sidebar.markdown("---")
-            
-            fund_options = {row['fund_name']: row['fund_id'] for _, row in filtered_df.iterrows()}
-            
-            col_all, col_none = st.sidebar.columns(2)
-            with col_all:
-                if st.button("✅ Alle", key=f"select_all_{fv}", width='stretch'):
-                    st.session_state[f"funds_{fv}"] = list(fund_options.keys())
-                    st.rerun()
-            with col_none:
-                if st.button("❌ Keine", key=f"select_none_{fv}", width='stretch'):
-                    st.session_state[f"funds_{fv}"] = []
-                    st.rerun()
-            
-            if f"funds_{fv}" not in st.session_state:
-                st.session_state[f"funds_{fv}"] = list(fund_options.keys())
-            
-            selected_fund_names = st.sidebar.multiselect("📌 Fonds auswählen", options=list(fund_options.keys()), default=None, key=f"funds_{fv}")
-            selected_fund_ids = [fund_options[name] for name in selected_fund_names]
+            if any_filter_set:
+                st.session_state.filters_applied = True
+                
+                # Filter anwenden
+                filtered_df = all_funds_df.copy()
+                if selected_vintages:
+                    filtered_df = filtered_df[filtered_df['vintage_year'].isin(selected_vintages)]
+                if selected_strategies:
+                    filtered_df = filtered_df[filtered_df['strategy'].isin(selected_strategies)]
+                if selected_geographies:
+                    filtered_df = filtered_df[filtered_df['geography'].isin(selected_geographies)]
+                if selected_gps:
+                    filtered_df = filtered_df[filtered_df['gp_name'].isin(selected_gps)]
+                if selected_pas and "(Alle)" not in selected_pas:
+                    if "(Ohne PA)" in selected_pas:
+                        pa_filter = [pa for pa in selected_pas if pa != "(Ohne PA)"]
+                        filtered_df = filtered_df[(filtered_df['pa_name'].isin(pa_filter)) | (filtered_df['pa_name'].isna())]
+                    else:
+                        filtered_df = filtered_df[filtered_df['pa_name'].isin(selected_pas)]
+                if selected_ratings:
+                    filtered_df = filtered_df[filtered_df['rating'].isin(selected_ratings)]
+                
+                selected_fund_ids = filtered_df['fund_id'].tolist()
+                selected_fund_names = filtered_df['fund_name'].tolist()
+                
+                st.sidebar.success(f"✅ {len(selected_fund_ids)} Fonds gefunden")
+            else:
+                st.session_state.filters_applied = False
+                filtered_df = pd.DataFrame()
+                selected_fund_ids = []
+                selected_fund_names = []
+                
+                st.sidebar.info("👆 Wähle mindestens einen Filter um Fonds anzuzeigen")
             
             fund_reporting_dates = {}
             if date_mode == "Jahr" and selected_year:
@@ -948,7 +958,10 @@ def show_main_app():
                     st.caption(f"📅 {current_date_info}")
                 
                 if not selected_fund_ids:
-                    st.info("👈 Wähle Fonds in der Sidebar aus")
+                    if not st.session_state.filters_applied:
+                        st.info("👈 Wähle mindestens einen Filter in der Sidebar um Fonds anzuzeigen")
+                    else:
+                        st.warning("Keine Fonds entsprechen den gewählten Filterkriterien")
                 else:
                     for i in range(0, len(selected_fund_ids), 2):
                         cols = st.columns(2)
@@ -979,7 +992,10 @@ def show_main_app():
                     st.caption(f"📅 {current_date_info}")
                 
                 if not selected_fund_ids:
-                    st.info("👈 Wähle Fonds in der Sidebar aus")
+                    if not st.session_state.filters_applied:
+                        st.info("👈 Wähle mindestens einen Filter in der Sidebar um Fonds anzuzeigen")
+                    else:
+                        st.warning("Keine Fonds entsprechen den gewählten Filterkriterien")
                 else:
                     comparison_df = filtered_df[filtered_df['fund_id'].isin(selected_fund_ids)].copy()
                     comparison_df = comparison_df.drop_duplicates(subset=['fund_id'], keep='first')
@@ -1011,7 +1027,10 @@ def show_main_app():
                     st.caption(f"📅 {current_date_info}")
                 
                 if not selected_fund_ids:
-                    st.info("👈 Wähle Fonds in der Sidebar aus")
+                    if not st.session_state.filters_applied:
+                        st.info("👈 Wähle mindestens einen Filter in der Sidebar um Fonds anzuzeigen")
+                    else:
+                        st.warning("Keine Fonds entsprechen den gewählten Filterkriterien")
                 else:
                     if date_mode == "Aktuell":
                         portfolio_query = """
@@ -1107,7 +1126,10 @@ def show_main_app():
                     st.caption(f"📅 {current_date_info}")
                 
                 if not selected_fund_ids:
-                    st.info("👈 Wähle Fonds in der Sidebar aus")
+                    if not st.session_state.filters_applied:
+                        st.info("👈 Wähle mindestens einen Filter in der Sidebar um Fonds anzuzeigen")
+                    else:
+                        st.warning("Keine Fonds entsprechen den gewählten Filterkriterien")
                 else:
                     for fund_id, fund_name in zip(selected_fund_ids, selected_fund_names):
                         report_date = fund_reporting_dates.get(fund_id)
