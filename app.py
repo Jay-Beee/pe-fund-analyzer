@@ -1170,55 +1170,57 @@ def show_main_app():
                             st.subheader("📈 Historische Entwicklung")
 
                             col_chart, col_empty = st.columns([1, 1])
-                            
-                            with conn.cursor() as cursor:
-                                cursor.execute("SELECT reporting_date, total_tvpi, dpi, loss_ratio, realized_percentage FROM fund_metrics_history WHERE fund_id = %s ORDER BY reporting_date", (fund_id,))
-                                history = cursor.fetchall()
-                            
-                            if history:
-                                df_history = pd.DataFrame(history, columns=['Stichtag', 'TVPI', 'DPI', 'Loss Ratio', 'Realisiert %'])
-                                df_history['Stichtag'] = pd.to_datetime(df_history['Stichtag'])
+
+                            with col_chart:
                                 
-                                selected_chart_metrics = st.multiselect("📊 Metriken auswählen", options=['TVPI', 'DPI', 'Loss Ratio', 'Realisiert %'], default=['TVPI', 'DPI'], key=f"chart_metrics_{fund_id}")
+                                with conn.cursor() as cursor:
+                                    cursor.execute("SELECT reporting_date, total_tvpi, dpi, loss_ratio, realized_percentage FROM fund_metrics_history WHERE fund_id = %s ORDER BY reporting_date", (fund_id,))
+                                    history = cursor.fetchall()
                                 
-                                if selected_chart_metrics:
-                                    fig, ax1 = plt.subplots(figsize=(12, 5))
-                                    colors = {'TVPI': 'darkblue', 'DPI': 'green', 'Loss Ratio': 'red', 'Realisiert %': 'orange'}
-                                    markers = {'TVPI': 'o', 'DPI': 's', 'Loss Ratio': '^', 'Realisiert %': 'd'}
+                                if history:
+                                    df_history = pd.DataFrame(history, columns=['Stichtag', 'TVPI', 'DPI', 'Loss Ratio', 'Realisiert %'])
+                                    df_history['Stichtag'] = pd.to_datetime(df_history['Stichtag'])
                                     
-                                    multiple_metrics = [m for m in selected_chart_metrics if m in ['TVPI', 'DPI']]
-                                    percent_metrics = [m for m in selected_chart_metrics if m in ['Loss Ratio', 'Realisiert %']]
-                                    lines, labels = [], []
+                                    selected_chart_metrics = st.multiselect("📊 Metriken auswählen", options=['TVPI', 'DPI', 'Loss Ratio', 'Realisiert %'], default=['TVPI', 'DPI'], key=f"chart_metrics_{fund_id}")
                                     
-                                    if multiple_metrics:
-                                        for metric in multiple_metrics:
-                                            line, = ax1.plot(df_history['Stichtag'], df_history[metric], marker=markers[metric], linewidth=2, markersize=8, color=colors[metric], label=metric)
-                                            lines.append(line)
-                                            labels.append(metric)
-                                        ax1.set_ylabel("Multiple (x)", color='darkblue')
-                                        ax1.yaxis.set_major_formatter(FuncFormatter(lambda v, p: f"{v:.2f}x"))
-                                    
-                                    if percent_metrics:
-                                        ax2 = ax1.twinx() if multiple_metrics else ax1
-                                        for metric in percent_metrics:
-                                            line, = ax2.plot(df_history['Stichtag'], df_history[metric], marker=markers[metric], linewidth=2, markersize=8, color=colors[metric], linestyle='--', label=metric)
-                                            lines.append(line)
-                                            labels.append(metric)
-                                        ax2.set_ylabel("Prozent (%)", color='gray')
-                                        ax2.yaxis.set_major_formatter(FuncFormatter(lambda v, p: f"{v:.1f}%"))
-                                    
-                                    ax1.set_xlabel("Stichtag")
-                                    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-                                    plt.xticks(rotation=45)
-                                    ax1.set_title(f"Historische Entwicklung: {fund_name}", fontsize=13, fontweight='bold')
-                                    ax1.grid(True, alpha=0.3)
-                                    ax1.legend(lines, labels, loc='upper left')
-                                    plt.tight_layout()
-                                    st.pyplot(fig)
-                                    plt.close()
-                            else:
-                                st.info("Keine historischen Daten vorhanden.")
-                            st.markdown("---")
+                                    if selected_chart_metrics:
+                                        fig, ax1 = plt.subplots(figsize=(12, 5))
+                                        colors = {'TVPI': 'darkblue', 'DPI': 'green', 'Loss Ratio': 'red', 'Realisiert %': 'orange'}
+                                        markers = {'TVPI': 'o', 'DPI': 's', 'Loss Ratio': '^', 'Realisiert %': 'd'}
+                                        
+                                        multiple_metrics = [m for m in selected_chart_metrics if m in ['TVPI', 'DPI']]
+                                        percent_metrics = [m for m in selected_chart_metrics if m in ['Loss Ratio', 'Realisiert %']]
+                                        lines, labels = [], []
+                                        
+                                        if multiple_metrics:
+                                            for metric in multiple_metrics:
+                                                line, = ax1.plot(df_history['Stichtag'], df_history[metric], marker=markers[metric], linewidth=2, markersize=8, color=colors[metric], label=metric)
+                                                lines.append(line)
+                                                labels.append(metric)
+                                            ax1.set_ylabel("Multiple (x)", color='darkblue')
+                                            ax1.yaxis.set_major_formatter(FuncFormatter(lambda v, p: f"{v:.2f}x"))
+                                        
+                                        if percent_metrics:
+                                            ax2 = ax1.twinx() if multiple_metrics else ax1
+                                            for metric in percent_metrics:
+                                                line, = ax2.plot(df_history['Stichtag'], df_history[metric], marker=markers[metric], linewidth=2, markersize=8, color=colors[metric], linestyle='--', label=metric)
+                                                lines.append(line)
+                                                labels.append(metric)
+                                            ax2.set_ylabel("Prozent (%)", color='gray')
+                                            ax2.yaxis.set_major_formatter(FuncFormatter(lambda v, p: f"{v:.1f}%"))
+                                        
+                                        ax1.set_xlabel("Stichtag")
+                                        ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+                                        plt.xticks(rotation=45)
+                                        ax1.set_title(f"Historische Entwicklung: {fund_name}", fontsize=13, fontweight='bold')
+                                        ax1.grid(True, alpha=0.3)
+                                        ax1.legend(lines, labels, loc='upper left')
+                                        plt.tight_layout()
+                                        st.pyplot(fig)
+                                        plt.close()
+                                else:
+                                    st.info("Keine historischen Daten vorhanden.")
+                                st.markdown("---")
             
             # TAB 5: PLACEMENT AGENTS
             with tab5:
