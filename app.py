@@ -407,6 +407,24 @@ def ensure_portfolio_company_fields(conn):
                 cursor.execute(f"ALTER TABLE portfolio_companies_history ADD COLUMN {field_name} {field_type}")
                 conn.commit()
 
+def ensure_net_metrics_fields(conn):
+    """Fügt Net TVPI und Net IRR Felder zu fund_metrics Tabellen hinzu"""
+    net_fields = [
+        ('net_tvpi', 'REAL'),
+        ('net_irr', 'REAL')
+    ]
+    
+    with conn.cursor() as cursor:
+        for field_name, field_type in net_fields:
+            # fund_metrics Tabelle
+            if not check_column_exists(conn, 'fund_metrics', field_name):
+                cursor.execute(f"ALTER TABLE fund_metrics ADD COLUMN {field_name} {field_type}")
+                conn.commit()
+            
+            # fund_metrics_history Tabelle
+            if not check_column_exists(conn, 'fund_metrics_history', field_name):
+                cursor.execute(f"ALTER TABLE fund_metrics_history ADD COLUMN {field_name} {field_type}")
+                conn.commit()
 
 def ensure_history_tables(conn):
     with conn.cursor() as cursor:
@@ -570,7 +588,7 @@ def get_portfolio_data_for_date(conn, fund_id, reporting_date):
 
 def get_fund_metrics_for_date(conn, fund_id, reporting_date):
     query = """
-    SELECT total_tvpi, dpi, top5_value_concentration, top5_capital_concentration,
+    SELECT total_tvpi, net_tvpi, net_irr, dpi, top5_value_concentration, top5_capital_concentration,
            loss_ratio, realized_percentage, num_investments
     FROM fund_metrics_history WHERE fund_id = %s AND reporting_date = %s
     """
@@ -688,7 +706,7 @@ def create_mekko_chart(fund_id, fund_name, conn, reporting_date=None):
 def load_all_funds(conn):
     query = """
     SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
-           f.currency, pa.pa_name, m.total_tvpi, m.dpi, m.top5_value_concentration, m.loss_ratio
+           f.currency, pa.pa_name, m.total_tvpi, m.net_tvpi, m.net_irr, m.dpi, m.top5_value_concentration, m.loss_ratio
     FROM funds f
     LEFT JOIN gps g ON f.gp_id = g.gp_id
     LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
@@ -703,7 +721,7 @@ def load_funds_with_history_metrics(conn, year=None, quarter_date=None):
     if quarter_date:
         query = """
         SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
-               f.currency, pa.pa_name, m.total_tvpi, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
+               f.currency, pa.pa_name, m.total_tvpi, m.net_tvpi, m.net_irr, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
         FROM funds f
         LEFT JOIN gps g ON f.gp_id = g.gp_id
         LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
@@ -715,7 +733,7 @@ def load_funds_with_history_metrics(conn, year=None, quarter_date=None):
     elif year:
         query = """
         SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
-               f.currency, pa.pa_name, m.total_tvpi, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
+               f.currency, pa.pa_name, m.total_tvpi, m.net_tvpi, m.net_irr, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
         FROM funds f
         LEFT JOIN gps g ON f.gp_id = g.gp_id
         LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
@@ -771,6 +789,7 @@ def initialize_database(conn):
     ensure_portfolio_companies_table(conn)
     ensure_fund_metrics_table(conn)
     ensure_history_tables(conn)
+    
 
 
 # === HAUPTAPP ===
@@ -814,6 +833,12 @@ def show_main_app():
         
         # Neue Portfolio Company Felder hinzufügen
         ensure_portfolio_company_fields(conn)
+
+        # Neue Portfolio Company Felder hinzufügen
+        ensure_portfolio_company_fields(conn)
+        
+        # Net TVPI und Net IRR Felder hinzufügen
+        ensure_net_metrics_fields(conn)
         
         migrated_date = migrate_existing_data_if_needed(conn)
         if migrated_date:
@@ -999,16 +1024,18 @@ def show_main_app():
                     comparison_df = comparison_df.drop_duplicates(subset=['fund_id'], keep='first')
                     
                     if 'reporting_date' in comparison_df.columns and date_mode != "Aktuell":
-                        comparison_df = comparison_df[['fund_name', 'gp_name', 'pa_name', 'vintage_year', 'strategy', 'currency', 'rating', 'total_tvpi', 'dpi', 'top5_value_concentration', 'loss_ratio', 'reporting_date']]
-                        comparison_df.columns = ['Fund', 'GP', 'Placement Agent', 'Vintage', 'Strategy', 'Währung', 'Rating', 'TVPI', 'DPI', 'Top 5 Conc.', 'Loss Ratio', 'Stichtag']
+                        comparison_df = comparison_df[['fund_name', 'gp_name', 'pa_name', 'vintage_year', 'strategy', 'currency', 'rating', 'total_tvpi', 'net_tvpi', 'net_irr', 'dpi', 'top5_value_concentration', 'loss_ratio', 'reporting_date']]
+                        comparison_df.columns = ['Fund', 'GP', 'Placement Agent', 'Vintage', 'Strategy', 'Währung', 'Rating', 'Gross TVPI', 'Net TVPI', 'Net IRR', 'DPI', 'Top 5 Conc.', 'Loss Ratio', 'Stichtag']    
                         comparison_df['Stichtag'] = comparison_df['Stichtag'].apply(lambda x: format_quarter(x) if pd.notna(x) else "-")
                     else:
-                        comparison_df = comparison_df[['fund_name', 'gp_name', 'pa_name', 'vintage_year', 'strategy', 'currency', 'rating', 'total_tvpi', 'dpi', 'top5_value_concentration', 'loss_ratio']]
-                        comparison_df.columns = ['Fund', 'GP', 'Placement Agent', 'Vintage', 'Strategy', 'Währung', 'Rating', 'TVPI', 'DPI', 'Top 5 Conc.', 'Loss Ratio']
+                        comparison_df = comparison_df[['fund_name', 'gp_name', 'pa_name', 'vintage_year', 'strategy', 'currency', 'rating', 'total_tvpi', 'net_tvpi', 'net_irr', 'dpi', 'top5_value_concentration', 'loss_ratio']]
+                        comparison_df.columns = ['Fund', 'GP', 'Placement Agent', 'Vintage', 'Strategy', 'Währung', 'Rating', 'Gross TVPI', 'Net TVPI', 'Net IRR', 'DPI', 'Top 5 Conc.', 'Loss Ratio']
                     
                     comparison_df['Placement Agent'] = comparison_df['Placement Agent'].apply(lambda x: x if pd.notna(x) else "-")
                     comparison_df['Währung'] = comparison_df['Währung'].apply(lambda x: x if pd.notna(x) else "-")
-                    comparison_df['TVPI'] = comparison_df['TVPI'].apply(lambda x: f"{x:.2f}x" if pd.notna(x) else "-")
+                    comparison_df['Gross TVPI'] = comparison_df['Gross TVPI'].apply(lambda x: f"{x:.2f}x" if pd.notna(x) else "-")
+                    comparison_df['Net TVPI'] = comparison_df['Net TVPI'].apply(lambda x: f"{x:.2f}x" if pd.notna(x) else "-")
+                    comparison_df['Net IRR'] = comparison_df['Net IRR'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "-")
                     comparison_df['DPI'] = comparison_df['DPI'].apply(lambda x: f"{x:.2f}x" if pd.notna(x) else "-")
                     comparison_df['Top 5 Conc.'] = comparison_df['Top 5 Conc.'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "-")
                     comparison_df['Loss Ratio'] = comparison_df['Loss Ratio'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "-")
@@ -1144,25 +1171,28 @@ def show_main_app():
                             if report_date:
                                 metrics = get_fund_metrics_for_date(conn, fund_id, report_date)
                             else:
-                                metrics = pd.read_sql_query("SELECT total_tvpi, dpi, num_investments FROM fund_metrics WHERE fund_id = %s", conn, params=(fund_id,))
+                                metrics = pd.read_sql_query("SELECT total_tvpi, net_tvpi, net_irr, dpi, num_investments FROM fund_metrics WHERE fund_id = %s", conn, params=(fund_id,))
                             
                             if not fund_info.empty:
-                                col1, col2, col3, col4, col5 = st.columns(5)
+                                col1, col2, col3, col4, col5, col6 = st.columns(6)
                                 with col1:
                                     st.metric("GP", fund_info['gp_name'].iloc[0] or "N/A")
                                     st.metric("Vintage", int(fund_info['vintage_year'].iloc[0]) if pd.notna(fund_info['vintage_year'].iloc[0]) else "N/A")
                                 with col2:
-                                    st.metric("TVPI", f"{metrics['total_tvpi'].iloc[0]:.2f}x" if not metrics.empty and pd.notna(metrics['total_tvpi'].iloc[0]) else "N/A")
-                                    st.metric("DPI", f"{metrics['dpi'].iloc[0]:.2f}x" if not metrics.empty and pd.notna(metrics['dpi'].iloc[0]) else "N/A")
+                                    st.metric("Gross TVPI", f"{metrics['total_tvpi'].iloc[0]:.2f}x" if not metrics.empty and pd.notna(metrics['total_tvpi'].iloc[0]) else "N/A")
+                                    st.metric("Net TVPI", f"{metrics['net_tvpi'].iloc[0]:.2f}x" if not metrics.empty and 'net_tvpi' in metrics.columns and pd.notna(metrics['net_tvpi'].iloc[0]) else "N/A")
                                 with col3:
+                                    st.metric("DPI", f"{metrics['dpi'].iloc[0]:.2f}x" if not metrics.empty and pd.notna(metrics['dpi'].iloc[0]) else "N/A")
+                                    st.metric("Net IRR", f"{metrics['net_irr'].iloc[0]:.1f}%" if not metrics.empty and 'net_irr' in metrics.columns and pd.notna(metrics['net_irr'].iloc[0]) else "N/A")
+                                with col4:
                                     st.metric("Strategy", fund_info['strategy'].iloc[0] or "N/A")
                                     st.metric("# Investments", int(metrics['num_investments'].iloc[0]) if not metrics.empty and pd.notna(metrics['num_investments'].iloc[0]) else "N/A")
-                                with col4:
+                                with col5:
                                     st.metric("Währung", fund_info['currency'].iloc[0] or "N/A")
                                     fund_size = fund_info['fund_size_m'].iloc[0]
                                     currency = fund_info['currency'].iloc[0] or ""
                                     st.metric("Fund Size", f"{fund_size:,.0f} Mio. {currency}" if pd.notna(fund_size) else "N/A")
-                                with col5:
+                                with col6:
                                     st.metric("Placement Agent", fund_info['pa_name'].iloc[0] or "N/A")
                                 
                                 st.subheader("Portfolio Companies")
@@ -1194,22 +1224,22 @@ def show_main_app():
                             with col_chart:
                                 
                                 with conn.cursor() as cursor:
-                                    cursor.execute("SELECT reporting_date, total_tvpi, dpi, loss_ratio, realized_percentage FROM fund_metrics_history WHERE fund_id = %s ORDER BY reporting_date", (fund_id,))
+                                    cursor.execute("SELECT reporting_date, total_tvpi, net_tvpi, net_irr, dpi, loss_ratio, realized_percentage FROM fund_metrics_history WHERE fund_id = %s ORDER BY reporting_date", (fund_id,))
                                     history = cursor.fetchall()
-                                
+
                                 if history:
-                                    df_history = pd.DataFrame(history, columns=['Stichtag', 'TVPI', 'DPI', 'Loss Ratio', 'Realisiert %'])
+                                    df_history = pd.DataFrame(history, columns=['Stichtag', 'Gross TVPI', 'Net TVPI', 'Net IRR', 'DPI', 'Loss Ratio', 'Realisiert %'])
                                     df_history['Stichtag'] = pd.to_datetime(df_history['Stichtag'])
                                     
-                                    selected_chart_metrics = st.multiselect("📊 Metriken auswählen", options=['TVPI', 'DPI', 'Loss Ratio', 'Realisiert %'], default=['TVPI', 'DPI'], key=f"chart_metrics_{fund_id}")
+                                    selected_chart_metrics = st.multiselect("📊 Metriken auswählen", options=['Gross TVPI', 'Net TVPI', 'Net IRR', 'DPI', 'Loss Ratio', 'Realisiert %'], default=['Gross TVPI', 'Net TVPI'], key=f"chart_metrics_{fund_id}")
                                     
                                     if selected_chart_metrics:
                                         fig, ax1 = plt.subplots(figsize=(12, 5))
-                                        colors = {'TVPI': 'darkblue', 'DPI': 'green', 'Loss Ratio': 'red', 'Realisiert %': 'orange'}
-                                        markers = {'TVPI': 'o', 'DPI': 's', 'Loss Ratio': '^', 'Realisiert %': 'd'}
+                                        colors = {'Gross TVPI': 'darkblue', 'Net TVPI': 'royalblue', 'Net IRR': 'purple', 'DPI': 'green', 'Loss Ratio': 'red', 'Realisiert %': 'orange'}
+                                        markers = {'Gross TVPI': 'o', 'Net TVPI': 'o', 'Net IRR': 'D', 'DPI': 's', 'Loss Ratio': '^', 'Realisiert %': 'd'}
                                         
-                                        multiple_metrics = [m for m in selected_chart_metrics if m in ['TVPI', 'DPI']]
-                                        percent_metrics = [m for m in selected_chart_metrics if m in ['Loss Ratio', 'Realisiert %']]
+                                        multiple_metrics = [m for m in selected_chart_metrics if m in ['Gross TVPI', 'Net TVPI', 'DPI']]
+                                        percent_metrics = [m for m in selected_chart_metrics if m in ['Net IRR', 'Loss Ratio', 'Realisiert %']]
                                         lines, labels = [], []
                                         
                                         if multiple_metrics:
@@ -1660,6 +1690,10 @@ def show_main_app():
                                         fund_col_map['unrealized_tvpi'] = i
                                     elif 'realisiert' in header_lower or 'realized' in header_lower:
                                         fund_col_map['realized_tvpi'] = i
+                                    elif 'net tvpi' in header_lower or 'net_tvpi' in header_lower:
+                                        fund_col_map['net_tvpi'] = i
+                                    elif 'net irr' in header_lower or 'net_irr' in header_lower:
+                                        fund_col_map['net_irr'] = i
                                     elif 'entry' in header_lower and ('multiple' in header_lower or 'ebitda' in header_lower):
                                         fund_col_map['entry_multiple'] = i
                                     elif 'gross irr' in header_lower or 'irr' in header_lower:
@@ -2264,20 +2298,25 @@ def show_main_app():
                                                         realized_pct = (total_realized_ccy / total_value_ccy * 100) if total_value_ccy > 0 else 0
                                                         loss_ratio = (loss_invested / total_invested * 100) if total_invested > 0 else 0
                                                     
+                                                        import_net_tvpi = fund_info['metadata'].get('net_tvpi')
+                                                        import_net_irr = fund_info['metadata'].get('net_irr')
+
                                                         cursor.execute("""
                                                         INSERT INTO fund_metrics_history
-                                                            (fund_id, reporting_date, total_tvpi, dpi, top5_value_concentration,
+                                                            (fund_id, reporting_date, total_tvpi, net_tvpi, net_irr, dpi, top5_value_concentration,
                                                              top5_capital_concentration, loss_ratio, realized_percentage, num_investments)
-                                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                                                         ON CONFLICT (fund_id, reporting_date) DO UPDATE SET
                                                             total_tvpi = EXCLUDED.total_tvpi,
+                                                            net_tvpi = EXCLUDED.net_tvpi,
+                                                            net_irr = EXCLUDED.net_irr,
                                                             dpi = EXCLUDED.dpi,
                                                             top5_value_concentration = EXCLUDED.top5_value_concentration,
                                                             top5_capital_concentration = EXCLUDED.top5_capital_concentration,
                                                             loss_ratio = EXCLUDED.loss_ratio,
                                                             realized_percentage = EXCLUDED.realized_percentage,
                                                             num_investments = EXCLUDED.num_investments
-                                                        """, (fund_id, reporting_date, calc_tvpi, dpi, top5_value_pct,
+                                                        """, (fund_id, reporting_date, calc_tvpi, import_net_tvpi, import_net_irr, dpi, top5_value_pct,
                                                               top5_capital_pct, loss_ratio, realized_pct, len(investments)))
                                                     
                                                         cursor.execute("""
@@ -2301,12 +2340,14 @@ def show_main_app():
                                                         
                                                             cursor.execute("""
                                                             INSERT INTO fund_metrics 
-                                                                (fund_id, total_tvpi, dpi, top5_value_concentration,
+                                                                (fund_id, total_tvpi, net_tvpi, net_irr, dpi, top5_value_concentration,
                                                                  top5_capital_concentration, loss_ratio, realized_percentage, 
                                                                  num_investments, calculation_date)
-                                                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                                                             ON CONFLICT (fund_id) DO UPDATE SET
                                                                 total_tvpi = EXCLUDED.total_tvpi,
+                                                                net_tvpi = EXCLUDED.net_tvpi,
+                                                                net_irr = EXCLUDED.net_irr,
                                                                 dpi = EXCLUDED.dpi,
                                                                 top5_value_concentration = EXCLUDED.top5_value_concentration,
                                                                 top5_capital_concentration = EXCLUDED.top5_capital_concentration,
@@ -2314,7 +2355,7 @@ def show_main_app():
                                                                 realized_percentage = EXCLUDED.realized_percentage,
                                                                 num_investments = EXCLUDED.num_investments,
                                                                 calculation_date = EXCLUDED.calculation_date
-                                                            """, (fund_id, calc_tvpi, dpi, top5_value_pct,
+                                                            """, (fund_id, calc_tvpi, import_net_tvpi, import_net_irr, dpi, top5_value_pct,
                                                                   top5_capital_pct, loss_ratio, realized_pct, 
                                                                   len(investments), reporting_date))
                                         
@@ -2613,7 +2654,8 @@ def show_main_app():
                             if edit_fund_name:
                                 edit_fund_id = fund_dict_edit[edit_fund_name]
                                 fund_data = pd.read_sql_query("SELECT fund_name, gp_id, placement_agent_id, vintage_year, strategy, geography, fund_size_m, currency, notes FROM funds WHERE fund_id = %s", conn, params=(edit_fund_id,))
-                            
+                                fund_metrics_data = pd.read_sql_query("SELECT net_tvpi, net_irr FROM fund_metrics WHERE fund_id = %s", conn, params=(edit_fund_id,))
+
                                 with conn.cursor() as cursor:
                                     cursor.execute("SELECT gp_id, gp_name FROM gps ORDER BY gp_name")
                                     gp_list = cursor.fetchall()
@@ -2657,14 +2699,38 @@ def show_main_app():
                                             current_currency = fund_data['currency'].iloc[0] if fund_data['currency'].iloc[0] in currency_options else 'EUR'
                                             currency_idx = currency_options.index(current_currency) if current_currency in currency_options else 0
                                             new_currency = st.selectbox("Währung", options=currency_options, index=currency_idx)
+                                        
+                                        st.markdown("---")
+                                        st.markdown("**📊 Fund-Level Metriken**")
+                                        col_net1, col_net2 = st.columns(2)
+                                        with col_net1:
+                                            current_net_tvpi = fund_metrics_data['net_tvpi'].iloc[0] if not fund_metrics_data.empty and pd.notna(fund_metrics_data['net_tvpi'].iloc[0]) else None
+                                            new_net_tvpi = st.number_input("Net TVPI", value=float(current_net_tvpi) if current_net_tvpi else 0.0, min_value=0.0, step=0.01, format="%.2f", help="Net TVPI nach Gebühren und Carry")
+                                        with col_net2:
+                                            current_net_irr = fund_metrics_data['net_irr'].iloc[0] if not fund_metrics_data.empty and pd.notna(fund_metrics_data['net_irr'].iloc[0]) else None
+                                            new_net_irr = st.number_input("Net IRR (%)", value=float(current_net_irr) if current_net_irr else 0.0, step=0.1, format="%.1f", help="Net IRR nach Gebühren und Carry")
+                                        
                                         new_notes = st.text_area("Notes", value=fund_data['notes'].iloc[0] or "")
-                                    
+
                                         if st.form_submit_button("💾 Speichern", type="primary"):
                                             with conn.cursor() as cursor:
+                                                # Fund-Daten aktualisieren
                                                 cursor.execute("""
                                                 UPDATE funds SET fund_name=%s, gp_id=%s, placement_agent_id=%s, vintage_year=%s, strategy=%s, geography=%s, 
                                                 fund_size_m=%s, currency=%s, notes=%s, updated_at=CURRENT_TIMESTAMP WHERE fund_id=%s
                                                 """, (new_fund_name, new_gp_id, new_pa_id, new_vintage, new_strategy, new_geography, new_fund_size, new_currency, new_notes, edit_fund_id))
+                                                
+                                                # NEU: Net TVPI und Net IRR in fund_metrics speichern
+                                                cursor.execute("""
+                                                INSERT INTO fund_metrics (fund_id, net_tvpi, net_irr)
+                                                VALUES (%s, %s, %s)
+                                                ON CONFLICT (fund_id) DO UPDATE SET
+                                                    net_tvpi = EXCLUDED.net_tvpi,
+                                                    net_irr = EXCLUDED.net_irr
+                                                """, (edit_fund_id, 
+                                                      new_net_tvpi if new_net_tvpi > 0 else None, 
+                                                      new_net_irr if new_net_irr != 0 else None))
+                                                
                                                 conn.commit()
                                             clear_cache()
                                             st.success(f"✅ Fund '{new_fund_name}' aktualisiert!")
