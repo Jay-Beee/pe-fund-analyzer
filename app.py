@@ -1527,7 +1527,7 @@ def show_main_app():
                         
                             **Zeile 4 (Fund/Portfolio Header):**
                             ```
-                            Fund Name | Stichtag | Vintage Year | Fund Size | Currency | Geography | Portfolio Company | Investment Date | Exit Date | Ownership % | Investiert | Realisiert | Unrealisiert | Entry Multiple | Gross IRR
+                            Fund Name | Stichtag | Vintage Year | Fund Size | Currency | Geography | Net TVPI | Net IRR | Portfolio Company | Investment Date | Exit Date | Ownership % | Investiert | Realisiert | Unrealisiert | Entry Multiple | Gross IRR
                             ```
                         
                             **Zeile 5+:** Fund- und Portfolio-Daten (mehrere Fonds möglich)
