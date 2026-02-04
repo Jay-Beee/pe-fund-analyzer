@@ -891,9 +891,6 @@ def show_main_app():
             ratings = sorted(all_funds_df['rating'].dropna().unique())
             selected_ratings = st.sidebar.multiselect("Rating", options=ratings, default=[], key=f"rating_{fv}") if ratings else []
             
-            ratings = sorted(all_funds_df['rating'].dropna().unique())
-            selected_ratings = st.sidebar.multiselect("Rating", options=ratings, default=ratings, key=f"rating_{fv}") if ratings else []
-            
 # Prüfen ob mindestens ein Filter gesetzt wurde
             any_filter_set = (
                 len(selected_vintages) > 0 or
