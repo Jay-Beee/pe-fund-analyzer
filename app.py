@@ -933,14 +933,14 @@ def show_main_app():
                 fund_reporting_dates = get_latest_date_for_year_per_fund(conn, selected_year, selected_fund_ids)
             elif date_mode == "Quartal" and selected_reporting_date:
                 fund_reporting_dates = {fid: selected_reporting_date for fid in selected_fund_ids}
-            
+          
             # Tabs basierend auf Rolle erstellen
             if is_admin():
-                tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 Charts", "📈 Vergleichstabelle", "🏢 Portfoliounternehmen", "📋 Details", "🤝 Placement Agents", "⚙️ Admin"])
+                tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📊 Charts", "📈 Vergleichstabelle Fonds", "🏢 Portfoliounternehmen", "📋 Fonds", "👔 GPs", "🤝 Placement Agents", "⚙️ Admin"])
             else:
-                tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Charts", "📈 Vergleichstabelle", "🏢 Portfoliounternehmen", "📋 Details", "🤝 Placement Agents"])
-                tab6 = None  # Kein Admin-Tab für normale User
-            
+                tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 Charts", "📈 Vergleichstabelle Fonds", "🏢 Portfoliounternehmen", "📋 Fonds", "👔 GPs", "🤝 Placement Agents"])
+                tab7 = None  # Kein Admin-Tab für normale User
+
             # TAB 1: CHARTS
             with tab1:
                 st.header("Mekko Charts")
@@ -1102,7 +1102,7 @@ def show_main_app():
             
             # TAB 4: DETAILS
             with tab4:
-                st.header("Fund Details")
+                st.header("📋 Fonds")
                 if date_mode != "Aktuell":
                     st.caption(f"📅 {current_date_info}")
                 
@@ -1228,8 +1228,67 @@ def show_main_app():
                                             
                             st.markdown("---")
             
-            # TAB 5: PLACEMENT AGENTS
+            # TAB 5: GPs
             with tab5:
+                st.header("👔 General Partners (GPs)")
+                
+                # Alle GPs mit verbundenen Fonds laden
+                gp_query = """
+                SELECT g.gp_id, g.gp_name, g.sector, g.headquarters, g.website, g.rating, 
+                       g.last_meeting, g.next_raise_estimate,
+                       g.contact1_name, g.contact1_function, g.contact1_email, g.contact1_phone,
+                       g.contact2_name, g.contact2_function, g.contact2_email, g.contact2_phone,
+                       COUNT(f.fund_id) as fund_count,
+                       STRING_AGG(f.fund_name, ', ' ORDER BY f.fund_name) as funds
+                FROM gps g
+                LEFT JOIN funds f ON g.gp_id = f.gp_id
+                GROUP BY g.gp_id, g.gp_name, g.sector, g.headquarters, g.website, g.rating,
+                         g.last_meeting, g.next_raise_estimate,
+                         g.contact1_name, g.contact1_function, g.contact1_email, g.contact1_phone,
+                         g.contact2_name, g.contact2_function, g.contact2_email, g.contact2_phone
+                ORDER BY g.gp_name
+                """
+                all_gps_df = pd.read_sql_query(gp_query, conn)
+                
+                if all_gps_df.empty:
+                    st.info("ℹ️ Keine GPs vorhanden. GPs können im Admin-Tab erstellt oder über Excel importiert werden.")
+                else:
+                    # Übersichtstabelle formatieren
+                    display_gps = all_gps_df.copy()
+                    display_gps['last_meeting'] = display_gps['last_meeting'].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) and x else "-")
+                    display_gps['next_raise_estimate'] = display_gps['next_raise_estimate'].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) and x else "-")
+                    display_gps['funds'] = display_gps['funds'].apply(lambda x: x if x else "-")
+                    
+                    # Spalten für Anzeige auswählen und umbenennen
+                    display_columns = {
+                        'gp_name': 'GP Name',
+                        'sector': 'Sektor',
+                        'headquarters': 'Headquarters',
+                        'rating': 'Rating',
+                        'last_meeting': 'Last Meeting',
+                        'next_raise_estimate': 'Next Raise',
+                        'contact1_name': 'Kontakt 1',
+                        'contact1_email': 'E-Mail 1',
+                        'fund_count': 'Anzahl Fonds',
+                        'funds': 'Verbundene Fonds'
+                    }
+                    
+                    display_df = display_gps[list(display_columns.keys())].rename(columns=display_columns)
+                    display_df = display_df.fillna("-")
+                    
+                    st.dataframe(display_df, use_container_width=True, hide_index=True)
+                    
+                    # Export als CSV
+                    csv_gps = display_df.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        "📥 Download GPs als CSV", 
+                        data=csv_gps, 
+                        file_name=f"gps_overview_{pd.Timestamp.now().strftime('%Y%m%d')}.csv", 
+                        mime="text/csv"
+                    )
+
+            # TAB 6: PLACEMENT AGENTS
+            with tab6:
                 st.header("🤝 Placement Agents")
                 
                 # Alle Placement Agents laden
@@ -1301,9 +1360,9 @@ def show_main_app():
                                 for fund in selected_pa[11].split(', '):
                                     st.markdown(f"- {fund}")
             
-            # TAB 6: ADMIN (nur für Admins sichtbar)
-            if is_admin() and tab6 is not None:
-                with tab6:
+            # TAB 7: ADMIN (nur für Admins sichtbar)
+            if is_admin() and tab7 is not None:
+                with tab7:
                     st.header("⚙️ Fund & GP Management")
                     
                     # Stichtag-Verwaltung
