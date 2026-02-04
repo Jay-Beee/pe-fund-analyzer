@@ -840,8 +840,9 @@ def show_main_app():
         
         st.sidebar.markdown("---")
         
-        if st.sidebar.button("🔄 Filter aktualisieren"):
+        if st.sidebar.button("🔄 Filter zurücksetzen"):
             st.session_state.filter_version += 1
+            st.session_state.filters_applied = False
             st.rerun()
         
         if date_mode == "Aktuell":
