@@ -967,7 +967,7 @@ def show_main_app():
                                 report_date = fund_reporting_dates.get(fund_id)
                                 fig = create_mekko_chart(fund_id, fund_name, conn, report_date)
                                 if fig:
-                                    st.pyplot(fig)
+                                    st.pyplot(fig, bbox_inches='tight', pad_inches=0.1)
                                     plt.close()
                         if i + 2 < len(selected_fund_ids):
                             st.markdown("---")
@@ -1168,6 +1168,9 @@ def show_main_app():
                             
                             # Historische Entwicklung
                             st.subheader("📈 Historische Entwicklung")
+
+                            col_chart, col_empty = st.columns([1, 1])
+                            
                             with conn.cursor() as cursor:
                                 cursor.execute("SELECT reporting_date, total_tvpi, dpi, loss_ratio, realized_percentage FROM fund_metrics_history WHERE fund_id = %s ORDER BY reporting_date", (fund_id,))
                                 history = cursor.fetchall()
