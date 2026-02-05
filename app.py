@@ -141,40 +141,30 @@ def get_db_connection():
     return psycopg2.connect(**DATABASE_CONFIG)
 
 
-# === CACHING FÜR HÄUFIGE ABFRAGEN ===
-@st.cache_data(ttl=60)
-def get_available_reporting_dates_cached(_conn_id):
-    with get_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT DISTINCT reporting_date FROM portfolio_companies_history ORDER BY reporting_date DESC")
-            return [row[0].strftime('%Y-%m-%d') if isinstance(row[0], (date, datetime)) else row[0] for row in cursor.fetchall()]
+# database_utils.py - Zusammengeführte Version
+# Enthält: Datenbank-Initialisierung, Migrationen, gecachte Abfragen und Batch-Funktionen
 
+import streamlit as st
+import pandas as pd
+from datetime import date, datetime
+import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
+from matplotlib.ticker import FuncFormatter
 
-@st.cache_data(ttl=60)
-def get_available_years_cached(_conn_id):
-    with get_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT DISTINCT EXTRACT(YEAR FROM reporting_date)::INTEGER as year FROM portfolio_companies_history ORDER BY year DESC")
-            return [int(row[0]) for row in cursor.fetchall() if row[0]]
+# ============================================================================
+# TEIL 1: DATENBANK-INITIALISIERUNG UND SCHEMA-MANAGEMENT
+# ============================================================================
 
-
-@st.cache_data(ttl=60)
-def load_all_funds_cached(_conn_id):
-    with get_connection() as conn:
-        query = """
-        SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
-               m.total_tvpi, m.dpi, m.top5_value_concentration, m.loss_ratio
-        FROM funds f
-        LEFT JOIN gps g ON f.gp_id = g.gp_id
-        LEFT JOIN fund_metrics m ON f.fund_id = m.fund_id
-        WHERE f.fund_id IS NOT NULL
-        ORDER BY f.fund_id, f.fund_name
-        """
-        return pd.read_sql_query(query, conn)
-
-
-def clear_cache():
-    st.cache_data.clear()
+def check_column_exists(conn, table_name, column_name):
+    """Prüft ob eine Spalte in einer Tabelle existiert"""
+    with conn.cursor() as cursor:
+        cursor.execute("""
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.columns 
+            WHERE table_name = %s AND column_name = %s
+        )
+        """, (table_name, column_name))
+        return cursor.fetchone()[0]
 
 
 def ensure_gps_table(conn):
@@ -302,6 +292,8 @@ def ensure_fund_metrics_table(conn):
             metric_id SERIAL PRIMARY KEY,
             fund_id INTEGER NOT NULL REFERENCES funds(fund_id) UNIQUE,
             total_tvpi REAL,
+            net_tvpi REAL,
+            net_irr REAL,
             dpi REAL,
             top5_value_concentration REAL,
             top5_capital_concentration REAL,
@@ -315,56 +307,51 @@ def ensure_fund_metrics_table(conn):
         conn.commit()
 
 
-def check_column_exists(conn, table_name, column_name):
-    """Prüft ob eine Spalte in einer Tabelle existiert"""
+def ensure_history_tables(conn):
+    """Erstellt die History-Tabellen für Portfolio Companies und Fund Metrics"""
     with conn.cursor() as cursor:
         cursor.execute("""
-        SELECT EXISTS (
-            SELECT 1 FROM information_schema.columns 
-            WHERE table_name = %s AND column_name = %s
+        CREATE TABLE IF NOT EXISTS portfolio_companies_history (
+            history_id SERIAL PRIMARY KEY,
+            fund_id INTEGER NOT NULL REFERENCES funds(fund_id),
+            company_name TEXT NOT NULL,
+            invested_amount REAL,
+            realized_tvpi REAL DEFAULT 0,
+            unrealized_tvpi REAL DEFAULT 0,
+            reporting_date DATE NOT NULL,
+            investment_date DATE,
+            exit_date DATE,
+            entry_multiple REAL,
+            gross_irr REAL,
+            ownership REAL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(fund_id, company_name, reporting_date)
         )
-        """, (table_name, column_name))
-        return cursor.fetchone()[0]
-
-
-def migrate_to_gp_table(conn):
-    """Migriert bestehende Daten zur neuen GP-Struktur"""
-    with conn.cursor() as cursor:
-        # Prüfen ob gp_id Spalte existiert
-        if check_column_exists(conn, 'funds', 'gp_id'):
-            return False
-        
-        # Prüfen ob gp_name Spalte existiert
-        if not check_column_exists(conn, 'funds', 'gp_name'):
-            return False
-        
-        # 1. GPs aus bestehenden Daten erstellen
-        cursor.execute("""
-        SELECT DISTINCT gp_name, rating, last_meeting, next_raise_estimate
-        FROM funds WHERE gp_name IS NOT NULL AND gp_name != ''
         """)
-        existing_gps = cursor.fetchall()
         
-        for gp_name, rating, last_meeting, next_raise in existing_gps:
-            cursor.execute("""
-            INSERT INTO gps (gp_name, rating, last_meeting, next_raise_estimate)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (gp_name) DO NOTHING
-            """, (gp_name, rating, last_meeting, next_raise))
-        
-        conn.commit()
-        
-        # 2. gp_id Spalte hinzufügen
-        cursor.execute("ALTER TABLE funds ADD COLUMN IF NOT EXISTS gp_id INTEGER REFERENCES gps(gp_id)")
-        conn.commit()
-        
-        # 3. gp_id setzen
         cursor.execute("""
-        UPDATE funds SET gp_id = (SELECT gp_id FROM gps WHERE gps.gp_name = funds.gp_name)
-        WHERE gp_name IS NOT NULL AND gp_name != ''
+        CREATE TABLE IF NOT EXISTS fund_metrics_history (
+            history_id SERIAL PRIMARY KEY,
+            fund_id INTEGER NOT NULL REFERENCES funds(fund_id),
+            reporting_date DATE NOT NULL,
+            total_tvpi REAL,
+            net_tvpi REAL,
+            net_irr REAL,
+            dpi REAL,
+            top5_value_concentration REAL,
+            top5_capital_concentration REAL,
+            loss_ratio REAL,
+            realized_percentage REAL,
+            num_investments INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(fund_id, reporting_date)
+        )
         """)
+        
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_pch_fund_date ON portfolio_companies_history(fund_id, reporting_date)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_fmh_fund_date ON fund_metrics_history(fund_id, reporting_date)")
+        
         conn.commit()
-        return True
 
 
 def ensure_currency_column(conn):
@@ -407,6 +394,7 @@ def ensure_portfolio_company_fields(conn):
                 cursor.execute(f"ALTER TABLE portfolio_companies_history ADD COLUMN {field_name} {field_type}")
                 conn.commit()
 
+
 def ensure_net_metrics_fields(conn):
     """Fügt Net TVPI und Net IRR Felder zu fund_metrics Tabellen hinzu"""
     net_fields = [
@@ -426,51 +414,53 @@ def ensure_net_metrics_fields(conn):
                 cursor.execute(f"ALTER TABLE fund_metrics_history ADD COLUMN {field_name} {field_type}")
                 conn.commit()
 
-def ensure_history_tables(conn):
+
+# ============================================================================
+# TEIL 2: MIGRATIONEN
+# ============================================================================
+
+def migrate_to_gp_table(conn):
+    """Migriert bestehende Daten zur neuen GP-Struktur"""
     with conn.cursor() as cursor:
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS portfolio_companies_history (
-            history_id SERIAL PRIMARY KEY,
-            fund_id INTEGER NOT NULL REFERENCES funds(fund_id),
-            company_name TEXT NOT NULL,
-            invested_amount REAL,
-            realized_tvpi REAL DEFAULT 0,
-            unrealized_tvpi REAL DEFAULT 0,
-            reporting_date DATE NOT NULL,
-            investment_date DATE,
-            exit_date DATE,
-            entry_multiple REAL,
-            gross_irr REAL,
-            ownership REAL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(fund_id, company_name, reporting_date)
-        )
-        """)
+        # Prüfen ob gp_id Spalte existiert
+        if check_column_exists(conn, 'funds', 'gp_id'):
+            return False
         
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS fund_metrics_history (
-            history_id SERIAL PRIMARY KEY,
-            fund_id INTEGER NOT NULL REFERENCES funds(fund_id),
-            reporting_date DATE NOT NULL,
-            total_tvpi REAL,
-            dpi REAL,
-            top5_value_concentration REAL,
-            top5_capital_concentration REAL,
-            loss_ratio REAL,
-            realized_percentage REAL,
-            num_investments INTEGER,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(fund_id, reporting_date)
-        )
-        """)
+        # Prüfen ob gp_name Spalte existiert
+        if not check_column_exists(conn, 'funds', 'gp_name'):
+            return False
         
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_pch_fund_date ON portfolio_companies_history(fund_id, reporting_date)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_fmh_fund_date ON fund_metrics_history(fund_id, reporting_date)")
+        # 1. GPs aus bestehenden Daten erstellen
+        cursor.execute("""
+        SELECT DISTINCT gp_name, rating, last_meeting, next_raise_estimate
+        FROM funds WHERE gp_name IS NOT NULL AND gp_name != ''
+        """)
+        existing_gps = cursor.fetchall()
+        
+        for gp_name, rating, last_meeting, next_raise in existing_gps:
+            cursor.execute("""
+            INSERT INTO gps (gp_name, rating, last_meeting, next_raise_estimate)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (gp_name) DO NOTHING
+            """, (gp_name, rating, last_meeting, next_raise))
         
         conn.commit()
+        
+        # 2. gp_id Spalte hinzufügen
+        cursor.execute("ALTER TABLE funds ADD COLUMN IF NOT EXISTS gp_id INTEGER REFERENCES gps(gp_id)")
+        conn.commit()
+        
+        # 3. gp_id setzen
+        cursor.execute("""
+        UPDATE funds SET gp_id = (SELECT gp_id FROM gps WHERE gps.gp_name = funds.gp_name)
+        WHERE gp_name IS NOT NULL AND gp_name != ''
+        """)
+        conn.commit()
+        return True
 
 
 def migrate_existing_data_if_needed(conn):
+    """Migriert bestehende Portfolio-Daten in die History-Tabellen"""
     with conn.cursor() as cursor:
         cursor.execute("SELECT COUNT(*) FROM portfolio_companies_history")
         history_count = cursor.fetchone()[0]
@@ -511,6 +501,32 @@ def migrate_existing_data_if_needed(conn):
         return None
 
 
+def initialize_database(conn):
+    """Initialisiert alle benötigten Tabellen und führt Migrationen durch"""
+    # Tabellen erstellen
+    ensure_gps_table(conn)
+    ensure_placement_agents_table(conn)
+    ensure_funds_table(conn)
+    ensure_portfolio_companies_table(conn)
+    ensure_fund_metrics_table(conn)
+    ensure_history_tables(conn)
+    
+    # Spalten-Erweiterungen
+    ensure_currency_column(conn)
+    ensure_placement_agent_column(conn)
+    ensure_placement_agent_contact_fields(conn)
+    ensure_portfolio_company_fields(conn)
+    ensure_net_metrics_fields(conn)
+    
+    # Migrationen
+    migrate_to_gp_table(conn)
+    migrate_existing_data_if_needed(conn)
+
+
+# ============================================================================
+# TEIL 3: HELPER-FUNKTIONEN
+# ============================================================================
+
 def get_or_create_gp(conn, gp_name):
     """Holt oder erstellt einen GP anhand des Namens"""
     if not gp_name or gp_name.strip() == '':
@@ -545,44 +561,89 @@ def get_or_create_placement_agent(conn, pa_name):
         return cursor.fetchone()[0]
 
 
-@st.cache_data(ttl=60)
+def format_quarter(date_str):
+    """Formatiert ein Datum als Quartal (z.B. 'Q3 2024')"""
+    if not date_str:
+        return "N/A"
+    try:
+        if isinstance(date_str, date):
+            d = date_str
+        elif isinstance(date_str, datetime):
+            d = date_str.date()
+        else:
+            d = datetime.strptime(str(date_str), "%Y-%m-%d").date()
+        quarter = (d.month - 1) // 3 + 1
+        return f"Q{quarter} {d.year}"
+    except:
+        return str(date_str)
+
+
+def get_quarter_end_date(input_date):
+    """Gibt das Quartalsende für ein gegebenes Datum zurück"""
+    year = input_date.year
+    month = input_date.month
+    if month <= 3:
+        return date(year, 3, 31)
+    elif month <= 6:
+        return date(year, 6, 30)
+    elif month <= 9:
+        return date(year, 9, 30)
+    else:
+        return date(year, 12, 31)
+
+
+def clear_cache():
+    """Löscht den gesamten Streamlit-Cache"""
+    st.cache_data.clear()
+
+
+# ============================================================================
+# TEIL 4: GECACHTE ABFRAGEN (TTL=300 Sekunden)
+# ============================================================================
+
+@st.cache_data(ttl=300)
 def get_available_reporting_dates_cached(_conn_id):
+    """Lädt alle verfügbaren Reporting-Daten - gecached"""
     with get_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute("SELECT DISTINCT reporting_date FROM portfolio_companies_history ORDER BY reporting_date DESC")
             return [row[0].strftime('%Y-%m-%d') if isinstance(row[0], (date, datetime)) else row[0] for row in cursor.fetchall()]
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def get_available_years_cached(_conn_id):
+    """Lädt alle verfügbaren Jahre - gecached"""
     with get_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute("SELECT DISTINCT EXTRACT(YEAR FROM reporting_date)::INTEGER as year FROM portfolio_companies_history ORDER BY year DESC")
             return [int(row[0]) for row in cursor.fetchall() if row[0]]
 
 
-@st.cache_data(ttl=60)
-def get_latest_date_for_year_per_fund_cached(_conn_id, year, fund_ids=None):
+@st.cache_data(ttl=300)
+def get_latest_date_for_year_per_fund_cached(_conn_id, year, fund_ids_tuple=None):
+    """Lädt das letzte Datum pro Fund für ein Jahr - gecached"""
     with get_connection() as conn:
-        if fund_ids:
-            cursor.execute("""
-            SELECT fund_id, MAX(reporting_date) as latest_date
-            FROM portfolio_companies_history
-            WHERE EXTRACT(YEAR FROM reporting_date) = %s AND fund_id = ANY(%s)
-            GROUP BY fund_id
-            """, (year, list(fund_ids)))
-        else:
-            cursor.execute("""
-            SELECT fund_id, MAX(reporting_date) as latest_date
-            FROM portfolio_companies_history WHERE EXTRACT(YEAR FROM reporting_date) = %s
-            GROUP BY fund_id
-            """, (year,))
-        
-        return {row[0]: row[1].strftime('%Y-%m-%d') if isinstance(row[1], (date, datetime)) else row[1] for row in cursor.fetchall()}
+        with conn.cursor() as cursor:
+            if fund_ids_tuple:
+                cursor.execute("""
+                SELECT fund_id, MAX(reporting_date) as latest_date
+                FROM portfolio_companies_history
+                WHERE EXTRACT(YEAR FROM reporting_date) = %s AND fund_id = ANY(%s)
+                GROUP BY fund_id
+                """, (year, list(fund_ids_tuple)))
+            else:
+                cursor.execute("""
+                SELECT fund_id, MAX(reporting_date) as latest_date
+                FROM portfolio_companies_history WHERE EXTRACT(YEAR FROM reporting_date) = %s
+                GROUP BY fund_id
+                """, (year,))
+            
+            return {row[0]: row[1].strftime('%Y-%m-%d') if isinstance(row[1], (date, datetime)) else row[1] for row in cursor.fetchall()}
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def get_portfolio_data_for_date_cached(_conn_id, fund_id, reporting_date):
+    """Lädt Portfolio-Daten für ein Datum - gecached"""
     with get_connection() as conn:
         query = """
         SELECT company_name, invested_amount, realized_tvpi, unrealized_tvpi
@@ -593,18 +654,239 @@ def get_portfolio_data_for_date_cached(_conn_id, fund_id, reporting_date):
         return pd.read_sql_query(query, conn, params=(fund_id, reporting_date))
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def get_fund_metrics_for_date_cached(_conn_id, fund_id, reporting_date):
+    """Lädt Fund-Metriken für ein Datum - gecached"""
     with get_connection() as conn:
         query = """
         SELECT total_tvpi, net_tvpi, net_irr, dpi, top5_value_concentration, top5_capital_concentration,
-            loss_ratio, realized_percentage, num_investments
+               loss_ratio, realized_percentage, num_investments
         FROM fund_metrics_history WHERE fund_id = %s AND reporting_date = %s
         """
         return pd.read_sql_query(query, conn, params=(fund_id, reporting_date))
 
 
+@st.cache_data(ttl=300)
+def load_all_funds_cached(_conn_id):
+    """Lädt alle Fonds mit aktuellen Metriken - gecached"""
+    with get_connection() as conn:
+        query = """
+        SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
+               f.currency, pa.pa_name, m.total_tvpi, m.net_tvpi, m.net_irr, m.dpi, m.top5_value_concentration, m.loss_ratio
+        FROM funds f
+        LEFT JOIN gps g ON f.gp_id = g.gp_id
+        LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
+        LEFT JOIN fund_metrics m ON f.fund_id = m.fund_id
+        WHERE f.fund_id IS NOT NULL 
+        ORDER BY f.fund_id, f.fund_name
+        """
+        return pd.read_sql_query(query, conn)
+
+
+@st.cache_data(ttl=300)
+def load_funds_with_history_metrics_cached(_conn_id, year=None, quarter_date=None):
+    """Lädt Fonds mit historischen Metriken - gecached"""
+    with get_connection() as conn:
+        if quarter_date:
+            query = """
+            SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
+                   f.currency, pa.pa_name, m.total_tvpi, m.net_tvpi, m.net_irr, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
+            FROM funds f
+            LEFT JOIN gps g ON f.gp_id = g.gp_id
+            LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
+            LEFT JOIN fund_metrics_history m ON f.fund_id = m.fund_id AND m.reporting_date = %s
+            WHERE f.fund_id IS NOT NULL 
+            ORDER BY f.fund_id, f.fund_name
+            """
+            return pd.read_sql_query(query, conn, params=(quarter_date,))
+        elif year:
+            query = """
+            SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
+                   f.currency, pa.pa_name, m.total_tvpi, m.net_tvpi, m.net_irr, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
+            FROM funds f
+            LEFT JOIN gps g ON f.gp_id = g.gp_id
+            LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
+            LEFT JOIN (
+                SELECT fund_id, MAX(reporting_date) as max_date 
+                FROM fund_metrics_history
+                WHERE EXTRACT(YEAR FROM reporting_date) = %s 
+                GROUP BY fund_id
+            ) latest ON f.fund_id = latest.fund_id
+            LEFT JOIN fund_metrics_history m ON f.fund_id = m.fund_id AND m.reporting_date = latest.max_date
+            WHERE f.fund_id IS NOT NULL 
+            ORDER BY f.fund_id, f.fund_name
+            """
+            return pd.read_sql_query(query, conn, params=(year,))
+        else:
+            return load_all_funds_cached(_conn_id)
+
+
+# ============================================================================
+# TEIL 5: BATCH-FUNKTIONEN FÜR PERFORMANCE
+# ============================================================================
+
+@st.cache_data(ttl=300)
+def get_fund_info_batch(_conn_id, fund_ids_tuple):
+    """Lädt Fund-Infos für mehrere Fonds in einer Abfrage - gecached"""
+    if not fund_ids_tuple:
+        return {}
+    
+    with get_connection() as conn:
+        query = """
+        SELECT f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.fund_size_m, 
+               f.currency, f.strategy, f.geography, g.rating, 
+               g.last_meeting, g.next_raise_estimate, pa.pa_name, f.notes
+        FROM funds f 
+        LEFT JOIN gps g ON f.gp_id = g.gp_id 
+        LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
+        WHERE f.fund_id = ANY(%s)
+        """
+        df = pd.read_sql_query(query, conn, params=(list(fund_ids_tuple),))
+        return {row['fund_id']: row.to_dict() for _, row in df.iterrows()}
+
+
+@st.cache_data(ttl=300)
+def get_fund_metrics_batch(_conn_id, fund_ids_tuple, reporting_dates_dict_keys=None, reporting_dates_dict_values=None):
+    """Lädt Metriken für mehrere Fonds in einer Abfrage - gecached"""
+    if not fund_ids_tuple:
+        return {}
+    
+    # Rekonstruiere das Dict aus Keys und Values (für Cache-Kompatibilität)
+    reporting_dates_dict = None
+    if reporting_dates_dict_keys and reporting_dates_dict_values:
+        reporting_dates_dict = dict(zip(reporting_dates_dict_keys, reporting_dates_dict_values))
+    
+    with get_connection() as conn:
+        if reporting_dates_dict:
+            # Historische Daten - gruppiere nach Datum
+            results = {}
+            date_to_funds = {}
+            for fund_id in fund_ids_tuple:
+                report_date = reporting_dates_dict.get(fund_id)
+                if report_date:
+                    if report_date not in date_to_funds:
+                        date_to_funds[report_date] = []
+                    date_to_funds[report_date].append(fund_id)
+            
+            for report_date, funds in date_to_funds.items():
+                query = """
+                SELECT fund_id, total_tvpi, net_tvpi, net_irr, dpi, 
+                       top5_value_concentration, top5_capital_concentration,
+                       loss_ratio, realized_percentage, num_investments
+                FROM fund_metrics_history 
+                WHERE fund_id = ANY(%s) AND reporting_date = %s
+                """
+                df = pd.read_sql_query(query, conn, params=(list(funds), report_date))
+                for _, row in df.iterrows():
+                    results[row['fund_id']] = row.to_dict()
+            
+            return results
+        else:
+            # Aktuelle Daten
+            query = """
+            SELECT fund_id, total_tvpi, net_tvpi, net_irr, dpi, 
+                   top5_value_concentration, top5_capital_concentration,
+                   loss_ratio, realized_percentage, num_investments
+            FROM fund_metrics 
+            WHERE fund_id = ANY(%s)
+            """
+            df = pd.read_sql_query(query, conn, params=(list(fund_ids_tuple),))
+            return {row['fund_id']: row.to_dict() for _, row in df.iterrows()}
+
+
+@st.cache_data(ttl=300)
+def get_fund_history_batch(_conn_id, fund_ids_tuple):
+    """Lädt Historien für mehrere Fonds in einer Abfrage - gecached"""
+    if not fund_ids_tuple:
+        return {}
+    
+    with get_connection() as conn:
+        query = """
+        SELECT fund_id, reporting_date, total_tvpi, net_tvpi, net_irr, 
+               dpi, loss_ratio, realized_percentage
+        FROM fund_metrics_history 
+        WHERE fund_id = ANY(%s)
+        ORDER BY fund_id, reporting_date
+        """
+        df = pd.read_sql_query(query, conn, params=(list(fund_ids_tuple),))
+        
+        # Gruppiere nach fund_id
+        result = {}
+        for fund_id in fund_ids_tuple:
+            fund_df = df[df['fund_id'] == fund_id]
+            if not fund_df.empty:
+                result[fund_id] = fund_df.to_dict('records')
+            else:
+                result[fund_id] = []
+        
+        return result
+
+
+@st.cache_data(ttl=300)
+def get_portfolio_data_for_funds_batch(_conn_id, fund_ids_tuple, reporting_dates_dict_keys=None, reporting_dates_dict_values=None):
+    """Lädt Portfolio-Daten für mehrere Fonds in einer Abfrage - gecached"""
+    if not fund_ids_tuple:
+        return pd.DataFrame()
+    
+    # Rekonstruiere das Dict aus Keys und Values (für Cache-Kompatibilität)
+    reporting_dates_dict = None
+    if reporting_dates_dict_keys and reporting_dates_dict_values:
+        reporting_dates_dict = dict(zip(reporting_dates_dict_keys, reporting_dates_dict_values))
+    
+    with get_connection() as conn:
+        if reporting_dates_dict:
+            # Historische Daten
+            dfs = []
+            date_to_funds = {}
+            for fund_id in fund_ids_tuple:
+                report_date = reporting_dates_dict.get(fund_id)
+                if report_date:
+                    if report_date not in date_to_funds:
+                        date_to_funds[report_date] = []
+                    date_to_funds[report_date].append(fund_id)
+            
+            for report_date, funds in date_to_funds.items():
+                query = """
+                SELECT pch.fund_id, pch.company_name, pch.invested_amount, 
+                       pch.realized_tvpi, pch.unrealized_tvpi,
+                       pch.investment_date, pch.exit_date, pch.entry_multiple, 
+                       pch.gross_irr, pch.ownership,
+                       f.fund_name, g.gp_name
+                FROM portfolio_companies_history pch
+                JOIN funds f ON pch.fund_id = f.fund_id
+                LEFT JOIN gps g ON f.gp_id = g.gp_id
+                WHERE pch.fund_id = ANY(%s) AND pch.reporting_date = %s
+                ORDER BY pch.fund_id, (pch.realized_tvpi + pch.unrealized_tvpi) DESC
+                """
+                df = pd.read_sql_query(query, conn, params=(list(funds), report_date))
+                if not df.empty:
+                    df['reporting_date'] = report_date
+                    dfs.append(df)
+            
+            return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+        else:
+            # Aktuelle Daten
+            query = """
+            SELECT pc.fund_id, pc.company_name, pc.invested_amount, 
+                   pc.realized_tvpi, pc.unrealized_tvpi,
+                   pc.investment_date, pc.exit_date, pc.entry_multiple, 
+                   pc.gross_irr, pc.ownership,
+                   f.fund_name, g.gp_name
+            FROM portfolio_companies pc
+            JOIN funds f ON pc.fund_id = f.fund_id
+            LEFT JOIN gps g ON f.gp_id = g.gp_id
+            WHERE pc.fund_id = ANY(%s)
+            ORDER BY pc.fund_id, (pc.realized_tvpi + pc.unrealized_tvpi) DESC
+            """
+            return pd.read_sql_query(query, conn, params=(list(fund_ids_tuple),))
+
+
+# ============================================================================
+# TEIL 6: VISUALISIERUNG (MEKKO CHART)
+# ============================================================================
+
 def wrap_label(text, max_chars=12, max_lines=2, base_fontsize=11):
+    """Bricht Text für Chart-Labels um"""
     words = text.split()
     lines = []
     current = ""
@@ -628,8 +910,21 @@ def wrap_label(text, max_chars=12, max_lines=2, base_fontsize=11):
     return "\n".join(lines), fontsize
 
 
-def create_mekko_chart(fund_id, fund_name, conn, reporting_date=None):
-    if reporting_date:
+def create_mekko_chart(fund_id, fund_name, conn, reporting_date=None, _conn_id=None):
+    """
+    Erstellt ein Mekko-Chart für einen Fund.
+    
+    Args:
+        fund_id: ID des Funds
+        fund_name: Name des Funds
+        conn: Datenbankverbindung (wird nur verwendet wenn reporting_date=None)
+        reporting_date: Optional - Stichtag für historische Daten
+        _conn_id: Optional - Connection ID für gecachte Abfragen
+    
+    Returns:
+        matplotlib Figure oder None wenn keine Daten vorhanden
+    """
+    if reporting_date and _conn_id:
         df = get_portfolio_data_for_date_cached(_conn_id, fund_id, reporting_date)
         title_suffix = f"\n(Stichtag: {reporting_date})"
     else:
@@ -671,6 +966,7 @@ def create_mekko_chart(fund_id, fund_name, conn, reporting_date=None):
         ax.text(x_start + cat_width / 2, label_y, wrapped_text, ha="center", va="top", fontsize=dyn_fontsize, fontweight="bold")
         x_start += cat_width
 
+    # Metriken berechnen
     total_value_ccy = 0
     total_realized_ccy = 0
     company_total_values_ccy = []
@@ -693,9 +989,12 @@ def create_mekko_chart(fund_id, fund_name, conn, reporting_date=None):
     loss_invested_ccy = sum(widths[i] for i in range(len(values)) if sum(values[i]) < 1.0)
     loss_ratio = loss_invested_ccy / total_invested_ccy * 100 if total_invested_ccy > 0 else 0
 
+    # Info-Box
     textstr = f"Top 5 Anteil am Gesamtfonds: {top5_value_pct:.1f}%\nTop 5 Anteil des investierten Kapitals: {top5_width_pct:.1f}%\nRealisierter Anteil gesamt: {realized_pct:.1f}%\nLoss ratio (<1.0x): {loss_ratio:.1f}%"
     props = dict(boxstyle='round', facecolor='whitesmoke', alpha=0.9)
     ax.text(1.02, 0.5, textstr, transform=ax.transAxes, fontsize=10, va='center', bbox=props)
+    
+    # Formatierung
     ax.set_xlim(0, total_width)
     ax.set_ylabel("TVPI")
     ax.yaxis.set_major_formatter(FuncFormatter(lambda v, p: f"{v:.2f}x"))
@@ -705,104 +1004,14 @@ def create_mekko_chart(fund_id, fund_name, conn, reporting_date=None):
     ax.set_xticks([])
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
+    
+    # Legende
     patches = [Patch(facecolor=REAL_COLOR, edgecolor="black", label="Realisiert"),
                Patch(facecolor=UNREAL_COLOR, edgecolor="black", label="Unrealisiert")]
     ax.legend(handles=patches, title="Status", loc="upper left", bbox_to_anchor=(1.02, 1))
     plt.tight_layout()
-    return fig
-
-
-@st.cache_data(ttl=60)
-def load_all_funds_cached(_conn_id):
-    with get_connection() as conn:
-        query = """
-        SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
-            f.currency, pa.pa_name, m.total_tvpi, m.net_tvpi, m.net_irr, m.dpi, m.top5_value_concentration, m.loss_ratio
-        FROM funds f
-        LEFT JOIN gps g ON f.gp_id = g.gp_id
-        LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
-        LEFT JOIN fund_metrics m ON f.fund_id = m.fund_id
-        WHERE f.fund_id IS NOT NULL 
-        ORDER BY f.fund_id, f.fund_name
-        """
-        return pd.read_sql_query(query, conn)
-
-
-@st.cache_data(ttl=60)
-def load_funds_with_history_metrics_cached(_conn_id, year=None, quarter_date=None):
-    with get_connection() as conn:
-        if quarter_date:
-            query = """
-            SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
-                f.currency, pa.pa_name, m.total_tvpi, m.net_tvpi, m.net_irr, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
-            FROM funds f
-            LEFT JOIN gps g ON f.gp_id = g.gp_id
-            LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
-            LEFT JOIN fund_metrics_history m ON f.fund_id = m.fund_id AND m.reporting_date = %s
-            WHERE f.fund_id IS NOT NULL 
-            ORDER BY f.fund_id, f.fund_name
-            """
-            return pd.read_sql_query(query, conn, params=(quarter_date,))
-        elif year:
-            query = """
-            SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
-                f.currency, pa.pa_name, m.total_tvpi, m.net_tvpi, m.net_irr, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
-            FROM funds f
-            LEFT JOIN gps g ON f.gp_id = g.gp_id
-            LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
-            LEFT JOIN (
-                SELECT fund_id, MAX(reporting_date) as max_date 
-                FROM fund_metrics_history
-                WHERE EXTRACT(YEAR FROM reporting_date) = %s 
-                GROUP BY fund_id
-            ) latest ON f.fund_id = latest.fund_id
-            LEFT JOIN fund_metrics_history m ON f.fund_id = m.fund_id AND m.reporting_date = latest.max_date
-            WHERE f.fund_id IS NOT NULL 
-            ORDER BY f.fund_id, f.fund_name
-            """
-            return pd.read_sql_query(query, conn, params=(year,))
-        else:
-            return load_all_funds_cached(_conn_id)
-
-
-def format_quarter(date_str):
-    if not date_str:
-        return "N/A"
-    try:
-        if isinstance(date_str, date):
-            d = date_str
-        elif isinstance(date_str, datetime):
-            d = date_str.date()
-        else:
-            d = datetime.strptime(str(date_str), "%Y-%m-%d").date()
-        quarter = (d.month - 1) // 3 + 1
-        return f"Q{quarter} {d.year}"
-    except:
-        return str(date_str)
-
-
-def get_quarter_end_date(input_date):
-    year = input_date.year
-    month = input_date.month
-    if month <= 3:
-        return date(year, 3, 31)
-    elif month <= 6:
-        return date(year, 6, 30)
-    elif month <= 9:
-        return date(year, 9, 30)
-    else:
-        return date(year, 12, 31)
-
-
-def initialize_database(conn):
-    """Initialisiert alle benötigten Tabellen"""
-    ensure_gps_table(conn)
-    ensure_placement_agents_table(conn)
-    ensure_funds_table(conn)
-    ensure_portfolio_companies_table(conn)
-    ensure_fund_metrics_table(conn)
-    ensure_history_tables(conn)
     
+    return fig
 
 
 # === HAUPTAPP ===
@@ -1073,43 +1282,34 @@ def show_main_app():
                         st.info("👈 Wähle mindestens einen Filter in der Sidebar um Fonds anzuzeigen")
                     else:
                         st.warning("Keine Fonds entsprechen den gewählten Filterkriterien")
-                else:
-                    if date_mode == "Aktuell":
-                        portfolio_query = """
-                        SELECT pc.company_name as "Unternehmen", f.fund_name as "Fonds", g.gp_name as "GP",
-                               pc.invested_amount as "Investiert", pc.realized_tvpi as "Realized TVPI",
-                               pc.unrealized_tvpi as "Unrealized TVPI", (pc.realized_tvpi + pc.unrealized_tvpi) as "Total TVPI",
-                               (pc.realized_tvpi + pc.unrealized_tvpi) * pc.invested_amount as "Gesamtwert",
-                               pc.investment_date as "Investitionsdatum", pc.exit_date as "Exitdatum",
-                               pc.entry_multiple as "Entry Multiple", pc.gross_irr as "Gross IRR"
-                        FROM portfolio_companies pc
-                        JOIN funds f ON pc.fund_id = f.fund_id
-                        LEFT JOIN gps g ON f.gp_id = g.gp_id
-                        WHERE pc.fund_id = ANY(%s) ORDER BY pc.company_name
-                        """
-                        all_portfolio = pd.read_sql_query(portfolio_query, conn, params=(list(selected_fund_ids),))
+                else:                  
+                    # Batch-Abfrage für alle Portfoliounternehmen
+                    fund_ids_tuple = tuple(selected_fund_ids)
+                    reporting_dates_dict = fund_reporting_dates if date_mode != "Aktuell" else None
+
+                    portfolio_batch = get_portfolio_data_for_funds_batch(conn_id, fund_ids_tuple, reporting_dates_dict)
+
+                    if portfolio_batch.empty:
+                        all_portfolio = pd.DataFrame()
                     else:
-                        portfolio_dfs = []
-                        for fund_id in selected_fund_ids:
-                            report_date = fund_reporting_dates.get(fund_id)
-                            if report_date:
-                                query = """
-                                SELECT pc.company_name as "Unternehmen", f.fund_name as "Fonds", g.gp_name as "GP",
-                                       pc.invested_amount as "Investiert", pc.realized_tvpi as "Realized TVPI",
-                                       pc.unrealized_tvpi as "Unrealized TVPI", (pc.realized_tvpi + pc.unrealized_tvpi) as "Total TVPI",
-                                       (pc.realized_tvpi + pc.unrealized_tvpi) * pc.invested_amount as "Gesamtwert",
-                                       pc.investment_date as "Investitionsdatum", pc.exit_date as "Exitdatum",
-                                       pc.entry_multiple as "Entry Multiple", pc.gross_irr as "Gross IRR",
-                                       pc.reporting_date as "Stichtag"
-                                FROM portfolio_companies_history pc
-                                JOIN funds f ON pc.fund_id = f.fund_id
-                                LEFT JOIN gps g ON f.gp_id = g.gp_id
-                                WHERE pc.fund_id = %s AND pc.reporting_date = %s
-                                """
-                                df = pd.read_sql_query(query, conn, params=(fund_id, report_date))
-                                portfolio_dfs.append(df)
-                        all_portfolio = pd.concat(portfolio_dfs, ignore_index=True) if portfolio_dfs else pd.DataFrame()
-                    
+                        # Formatiere für Anzeige
+                        all_portfolio = portfolio_batch.copy()
+                        all_portfolio['Total TVPI'] = all_portfolio['realized_tvpi'] + all_portfolio['unrealized_tvpi']
+                        all_portfolio['Gesamtwert'] = all_portfolio['Total TVPI'] * all_portfolio['invested_amount']
+                        all_portfolio = all_portfolio.rename(columns={
+                            'company_name': 'Unternehmen',
+                            'fund_name': 'Fonds',
+                            'gp_name': 'GP',
+                            'invested_amount': 'Investiert',
+                            'realized_tvpi': 'Realized TVPI',
+                            'unrealized_tvpi': 'Unrealized TVPI',
+                            'investment_date': 'Investitionsdatum',
+                            'exit_date': 'Exitdatum',
+                            'entry_multiple': 'Entry Multiple',
+                            'gross_irr': 'Gross IRR'
+                        })
+
+
                     if all_portfolio.empty:
                         st.info("Keine Portfoliounternehmen für die ausgewählten Fonds vorhanden.")
                     else:
@@ -1161,7 +1361,7 @@ def show_main_app():
                         csv_portfolio = filtered_portfolio.to_csv(index=False).encode('utf-8')
                         st.download_button("📥 Download als CSV", data=csv_portfolio, file_name=f"portfolio_companies_{pd.Timestamp.now().strftime('%Y%m%d')}.csv", mime="text/csv", key="download_portfolio")
             
-            # TAB 4: DETAILS
+            # TAB 4: FONDS DETAILS
             with tab4:
                 st.header("📋 Fonds")
                 if date_mode != "Aktuell":
@@ -1173,87 +1373,120 @@ def show_main_app():
                     else:
                         st.warning("Keine Fonds entsprechen den gewählten Filterkriterien")
                 else:
+                    # === BATCH-LADEN ALLER DATEN VOR DER SCHLEIFE ===
+                    fund_ids_tuple = tuple(selected_fund_ids)
+                    reporting_dates_dict = fund_reporting_dates if date_mode != "Aktuell" else None
+                    
+                    # Alle Daten in einem Rutsch laden (4 Abfragen statt 4 x Anzahl Fonds)
+                    all_fund_info = get_fund_info_batch(conn_id, fund_ids_tuple)
+                    all_fund_metrics = get_fund_metrics_batch(conn_id, fund_ids_tuple, reporting_dates_dict)
+                    all_fund_history = get_fund_history_batch(conn_id, fund_ids_tuple)
+                    all_portfolio_data = get_portfolio_data_for_funds_batch(conn_id, fund_ids_tuple, reporting_dates_dict)
+                    
+                    # === SCHLEIFE NUTZT VORGELADENE DATEN ===
                     for fund_id, fund_name in zip(selected_fund_ids, selected_fund_names):
                         report_date = fund_reporting_dates.get(fund_id)
                         
                         with st.expander(f"📂 {fund_name}" + (f" ({report_date})" if report_date else ""), expanded=True):
-                            fund_info = pd.read_sql_query("""
-                            SELECT g.gp_name, f.vintage_year, f.fund_size_m, f.currency, f.strategy, f.geography, g.rating, g.last_meeting, g.next_raise_estimate, pa.pa_name, f.notes
-                            FROM funds f 
-                            LEFT JOIN gps g ON f.gp_id = g.gp_id 
-                            LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
-                            WHERE f.fund_id = %s
-                            """, conn, params=(fund_id,))
+                            # Fund-Info aus Batch holen
+                            fund_info_dict = all_fund_info.get(fund_id, {})
                             
-                            if report_date:
-                                metrics = get_fund_metrics_for_date_cached(conn_id, fund_id, report_date)
-                            else:
-                                metrics = pd.read_sql_query("SELECT total_tvpi, net_tvpi, net_irr, dpi, num_investments FROM fund_metrics WHERE fund_id = %s", conn, params=(fund_id,))
+                            # Metriken aus Batch holen
+                            metrics_dict = all_fund_metrics.get(fund_id, {})
                             
-                            if not fund_info.empty:
+                            if fund_info_dict:
                                 col1, col2, col3, col4, col5, col6 = st.columns(6)
                                 with col1:
-                                    st.metric("GP", fund_info['gp_name'].iloc[0] or "N/A")
-                                    st.metric("Vintage", int(fund_info['vintage_year'].iloc[0]) if pd.notna(fund_info['vintage_year'].iloc[0]) else "N/A")
+                                    st.metric("GP", fund_info_dict.get('gp_name') or "N/A")
+                                    vintage = fund_info_dict.get('vintage_year')
+                                    st.metric("Vintage", int(vintage) if vintage and pd.notna(vintage) else "N/A")
                                 with col2:
-                                    st.metric("Gross TVPI", f"{metrics['total_tvpi'].iloc[0]:.2f}x" if not metrics.empty and pd.notna(metrics['total_tvpi'].iloc[0]) else "N/A")
-                                    st.metric("Net TVPI", f"{metrics['net_tvpi'].iloc[0]:.2f}x" if not metrics.empty and 'net_tvpi' in metrics.columns and pd.notna(metrics['net_tvpi'].iloc[0]) else "N/A")
+                                    gross_tvpi = metrics_dict.get('total_tvpi')
+                                    st.metric("Gross TVPI", f"{gross_tvpi:.2f}x" if gross_tvpi and pd.notna(gross_tvpi) else "N/A")
+                                    net_tvpi = metrics_dict.get('net_tvpi')
+                                    st.metric("Net TVPI", f"{net_tvpi:.2f}x" if net_tvpi and pd.notna(net_tvpi) else "N/A")
                                 with col3:
-                                    st.metric("DPI", f"{metrics['dpi'].iloc[0]:.2f}x" if not metrics.empty and pd.notna(metrics['dpi'].iloc[0]) else "N/A")
-                                    st.metric("Net IRR", f"{metrics['net_irr'].iloc[0]:.1f}%" if not metrics.empty and 'net_irr' in metrics.columns and pd.notna(metrics['net_irr'].iloc[0]) else "N/A")
+                                    dpi = metrics_dict.get('dpi')
+                                    st.metric("DPI", f"{dpi:.2f}x" if dpi and pd.notna(dpi) else "N/A")
+                                    net_irr = metrics_dict.get('net_irr')
+                                    st.metric("Net IRR", f"{net_irr:.1f}%" if net_irr and pd.notna(net_irr) else "N/A")
                                 with col4:
-                                    st.metric("Strategy", fund_info['strategy'].iloc[0] or "N/A")
-                                    st.metric("# Investments", int(metrics['num_investments'].iloc[0]) if not metrics.empty and pd.notna(metrics['num_investments'].iloc[0]) else "N/A")
+                                    st.metric("Strategy", fund_info_dict.get('strategy') or "N/A")
+                                    num_inv = metrics_dict.get('num_investments')
+                                    st.metric("# Investments", int(num_inv) if num_inv and pd.notna(num_inv) else "N/A")
                                 with col5:
-                                    st.metric("Währung", fund_info['currency'].iloc[0] or "N/A")
-                                    fund_size = fund_info['fund_size_m'].iloc[0]
-                                    currency = fund_info['currency'].iloc[0] or ""
-                                    st.metric("Fund Size", f"{fund_size:,.0f} Mio. {currency}" if pd.notna(fund_size) else "N/A")
+                                    st.metric("Währung", fund_info_dict.get('currency') or "N/A")
+                                    fund_size = fund_info_dict.get('fund_size_m')
+                                    currency = fund_info_dict.get('currency') or ""
+                                    st.metric("Fund Size", f"{fund_size:,.0f} Mio. {currency}" if fund_size and pd.notna(fund_size) else "N/A")
                                 with col6:
-                                    st.metric("Placement Agent", fund_info['pa_name'].iloc[0] or "N/A")
+                                    st.metric("Placement Agent", fund_info_dict.get('pa_name') or "N/A")
                                 
+                                # Portfolio Companies aus Batch filtern
                                 st.subheader("Portfolio Companies")
-                                if report_date:
-                                    portfolio = get_portfolio_data_for_date_cached(id(conn), fund_id, report_date)
-                                    if not portfolio.empty:
-                                        portfolio['Total TVPI'] = portfolio['realized_tvpi'] + portfolio['unrealized_tvpi']
-                                        portfolio = portfolio.rename(columns={'company_name': 'Company', 'invested_amount': 'Invested', 'realized_tvpi': 'Realized', 'unrealized_tvpi': 'Unrealized'})
+                                if not all_portfolio_data.empty:
+                                    portfolio = all_portfolio_data[all_portfolio_data['fund_id'] == fund_id].copy()
                                 else:
-                                    portfolio = pd.read_sql_query("""
-                                    SELECT company_name as "Company", invested_amount as "Invested", realized_tvpi as "Realized",
-                                           unrealized_tvpi as "Unrealized", (realized_tvpi + unrealized_tvpi) as "Total TVPI"
-                                    FROM portfolio_companies WHERE fund_id = %s ORDER BY (realized_tvpi + unrealized_tvpi) * invested_amount DESC
-                                    """, conn, params=(fund_id,))
+                                    portfolio = pd.DataFrame()
                                 
                                 if not portfolio.empty:
+                                    portfolio['Total TVPI'] = portfolio['realized_tvpi'] + portfolio['unrealized_tvpi']
+                                    portfolio = portfolio[['company_name', 'invested_amount', 'realized_tvpi', 'unrealized_tvpi', 'Total TVPI']]
+                                    portfolio.columns = ['Company', 'Invested', 'Realized', 'Unrealized', 'Total TVPI']
                                     portfolio['Total TVPI'] = portfolio['Total TVPI'].apply(lambda x: f"{x:.2f}x")
                                     portfolio['Realized'] = portfolio['Realized'].apply(lambda x: f"{x:.2f}x")
                                     portfolio['Unrealized'] = portfolio['Unrealized'].apply(lambda x: f"{x:.2f}x")
-                                    st.dataframe(portfolio, width='stretch', hide_index=True)
+                                    st.dataframe(portfolio, use_container_width=True, hide_index=True)
                                 else:
                                     st.info("Keine Portfolio Companies vorhanden")
                             
-                            # Historische Entwicklung
+                            # Historische Entwicklung aus Batch
                             st.subheader("📈 Historische Entwicklung")
 
                             col_chart, col_empty = st.columns([1, 1])
 
                             with col_chart:
-                                
-                                with conn.cursor() as cursor:
-                                    cursor.execute("SELECT reporting_date, total_tvpi, net_tvpi, net_irr, dpi, loss_ratio, realized_percentage FROM fund_metrics_history WHERE fund_id = %s ORDER BY reporting_date", (fund_id,))
-                                    history = cursor.fetchall()
+                                # Historie aus Batch holen
+                                history = all_fund_history.get(fund_id, [])
 
                                 if history:
-                                    df_history = pd.DataFrame(history, columns=['Stichtag', 'Gross TVPI', 'Net TVPI', 'Net IRR', 'DPI', 'Loss Ratio', 'Realisiert %'])
-                                    df_history['Stichtag'] = pd.to_datetime(df_history['Stichtag'])
+                                    df_history = pd.DataFrame(history)
+                                    df_history['reporting_date'] = pd.to_datetime(df_history['reporting_date'])
+                                    df_history = df_history.rename(columns={
+                                        'reporting_date': 'Stichtag',
+                                        'total_tvpi': 'Gross TVPI',
+                                        'net_tvpi': 'Net TVPI',
+                                        'net_irr': 'Net IRR',
+                                        'dpi': 'DPI',
+                                        'loss_ratio': 'Loss Ratio',
+                                        'realized_percentage': 'Realisiert %'
+                                    })
                                     
-                                    selected_chart_metrics = st.multiselect("📊 Metriken auswählen", options=['Gross TVPI', 'Net TVPI', 'Net IRR', 'DPI', 'Loss Ratio', 'Realisiert %'], default=['Gross TVPI', 'Net TVPI'], key=f"chart_metrics_{fund_id}")
+                                    selected_chart_metrics = st.multiselect(
+                                        "📊 Metriken auswählen", 
+                                        options=['Gross TVPI', 'Net TVPI', 'Net IRR', 'DPI', 'Loss Ratio', 'Realisiert %'], 
+                                        default=['Gross TVPI', 'Net TVPI'], 
+                                        key=f"chart_metrics_{fund_id}"
+                                    )
                                     
                                     if selected_chart_metrics:
                                         fig, ax1 = plt.subplots(figsize=(12, 5))
-                                        colors = {'Gross TVPI': 'darkblue', 'Net TVPI': 'royalblue', 'Net IRR': 'purple', 'DPI': 'green', 'Loss Ratio': 'red', 'Realisiert %': 'orange'}
-                                        markers = {'Gross TVPI': 'o', 'Net TVPI': 'o', 'Net IRR': 'D', 'DPI': 's', 'Loss Ratio': '^', 'Realisiert %': 'd'}
+                                        colors = {
+                                            'Gross TVPI': 'darkblue', 
+                                            'Net TVPI': 'royalblue', 
+                                            'Net IRR': 'purple', 
+                                            'DPI': 'green', 
+                                            'Loss Ratio': 'red', 
+                                            'Realisiert %': 'orange'
+                                        }
+                                        markers = {
+                                            'Gross TVPI': 'o', 
+                                            'Net TVPI': 'o', 
+                                            'Net IRR': 'D', 
+                                            'DPI': 's', 
+                                            'Loss Ratio': '^', 
+                                            'Realisiert %': 'd'
+                                        }
                                         
                                         multiple_metrics = [m for m in selected_chart_metrics if m in ['Gross TVPI', 'Net TVPI', 'DPI']]
                                         percent_metrics = [m for m in selected_chart_metrics if m in ['Net IRR', 'Loss Ratio', 'Realisiert %']]
@@ -1261,18 +1494,37 @@ def show_main_app():
                                         
                                         if multiple_metrics:
                                             for metric in multiple_metrics:
-                                                line, = ax1.plot(df_history['Stichtag'], df_history[metric], marker=markers[metric], linewidth=2, markersize=8, color=colors[metric], label=metric)
-                                                lines.append(line)
-                                                labels.append(metric)
+                                                if metric in df_history.columns:
+                                                    line, = ax1.plot(
+                                                        df_history['Stichtag'], 
+                                                        df_history[metric], 
+                                                        marker=markers[metric], 
+                                                        linewidth=2, 
+                                                        markersize=8, 
+                                                        color=colors[metric], 
+                                                        label=metric
+                                                    )
+                                                    lines.append(line)
+                                                    labels.append(metric)
                                             ax1.set_ylabel("Multiple (x)", color='darkblue')
                                             ax1.yaxis.set_major_formatter(FuncFormatter(lambda v, p: f"{v:.2f}x"))
                                         
                                         if percent_metrics:
                                             ax2 = ax1.twinx() if multiple_metrics else ax1
                                             for metric in percent_metrics:
-                                                line, = ax2.plot(df_history['Stichtag'], df_history[metric], marker=markers[metric], linewidth=2, markersize=8, color=colors[metric], linestyle='--', label=metric)
-                                                lines.append(line)
-                                                labels.append(metric)
+                                                if metric in df_history.columns:
+                                                    line, = ax2.plot(
+                                                        df_history['Stichtag'], 
+                                                        df_history[metric], 
+                                                        marker=markers[metric], 
+                                                        linewidth=2, 
+                                                        markersize=8, 
+                                                        color=colors[metric], 
+                                                        linestyle='--', 
+                                                        label=metric
+                                                    )
+                                                    lines.append(line)
+                                                    labels.append(metric)
                                             ax2.set_ylabel("Prozent (%)", color='gray')
                                             ax2.yaxis.set_major_formatter(FuncFormatter(lambda v, p: f"{v:.1f}%"))
                                         
@@ -1283,18 +1535,18 @@ def show_main_app():
                                         ax1.grid(True, alpha=0.3)
                                         ax1.legend(lines, labels, loc='upper left')
                                         plt.tight_layout()
-                                        st.pyplot(fig, width='content', bbox_inches='tight', pad_inches=0.1)
+                                        st.pyplot(fig, use_container_width=False)
                                         plt.close()
                                 else:
                                     st.info("Keine historischen Daten vorhanden.")
                             
                             with col_empty:
                                 st.markdown("📝 Notizen")
-                                notes = fund_info['notes'].iloc[0] if not fund_info.empty and pd.notna(fund_info['notes'].iloc[0]) else "Keine Notizen vorhanden"
-                                st.markdown(notes, unsafe_allow_html=True)
+                                notes = fund_info_dict.get('notes')
+                                st.markdown(notes if notes and pd.notna(notes) else "Keine Notizen vorhanden", unsafe_allow_html=True)
                                             
                             st.markdown("---")
-            
+                    
             # TAB 5: GPs
             with tab5:
                 st.header("👔 General Partners (GPs)")
