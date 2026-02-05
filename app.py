@@ -557,8 +557,9 @@ def get_available_years(conn):
         return [int(row[0]) for row in cursor.fetchall() if row[0]]
 
 
-def get_latest_date_for_year_per_fund(conn, year, fund_ids=None):
-    with conn.cursor() as cursor:
+@st.cache_data(ttl=60)
+def get_latest_date_for_year_per_fund_cached(_conn_id, year, fund_ids=None):
+    with get_connection() as conn:
         if fund_ids:
             cursor.execute("""
             SELECT fund_id, MAX(reporting_date) as latest_date
@@ -576,7 +577,9 @@ def get_latest_date_for_year_per_fund(conn, year, fund_ids=None):
         return {row[0]: row[1].strftime('%Y-%m-%d') if isinstance(row[1], (date, datetime)) else row[1] for row in cursor.fetchall()}
 
 
-def get_portfolio_data_for_date(conn, fund_id, reporting_date):
+@st.cache_data(ttl=60)
+def get_portfolio_data_for_date_cached(_conn_id, fund_id, reporting_date):
+    with get_connection() as conn:
     query = """
     SELECT company_name, invested_amount, realized_tvpi, unrealized_tvpi
     FROM portfolio_companies_history
@@ -586,7 +589,9 @@ def get_portfolio_data_for_date(conn, fund_id, reporting_date):
     return pd.read_sql_query(query, conn, params=(fund_id, reporting_date))
 
 
-def get_fund_metrics_for_date(conn, fund_id, reporting_date):
+@st.cache_data(ttl=60)
+def get_fund_metrics_for_date_cached(_conn_id, fund_id, reporting_date):
+    with get_connection() as conn:
     query = """
     SELECT total_tvpi, net_tvpi, net_irr, dpi, top5_value_concentration, top5_capital_concentration,
            loss_ratio, realized_percentage, num_investments
@@ -717,39 +722,41 @@ def load_all_funds(conn):
     return pd.read_sql_query(query, conn)
 
 
-def load_funds_with_history_metrics(conn, year=None, quarter_date=None):
-    if quarter_date:
-        query = """
-        SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
-               f.currency, pa.pa_name, m.total_tvpi, m.net_tvpi, m.net_irr, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
-        FROM funds f
-        LEFT JOIN gps g ON f.gp_id = g.gp_id
-        LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
-        LEFT JOIN fund_metrics_history m ON f.fund_id = m.fund_id AND m.reporting_date = %s
-        WHERE f.fund_id IS NOT NULL 
-        ORDER BY f.fund_id, f.fund_name
-        """
-        return pd.read_sql_query(query, conn, params=(quarter_date,))
-    elif year:
-        query = """
-        SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
-               f.currency, pa.pa_name, m.total_tvpi, m.net_tvpi, m.net_irr, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
-        FROM funds f
-        LEFT JOIN gps g ON f.gp_id = g.gp_id
-        LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
-        LEFT JOIN (
-            SELECT fund_id, MAX(reporting_date) as max_date 
-            FROM fund_metrics_history
-            WHERE EXTRACT(YEAR FROM reporting_date) = %s 
-            GROUP BY fund_id
-        ) latest ON f.fund_id = latest.fund_id
-        LEFT JOIN fund_metrics_history m ON f.fund_id = m.fund_id AND m.reporting_date = latest.max_date
-        WHERE f.fund_id IS NOT NULL 
-        ORDER BY f.fund_id, f.fund_name
-        """
-        return pd.read_sql_query(query, conn, params=(year,))
-    else:
-        return load_all_funds(conn)
+@st.cache_data(ttl=60)
+def load_funds_with_history_metrics_cached(_conn_id, year=None, quarter_date=None):
+    with get_connection() as conn:
+        if quarter_date:
+            query = """
+            SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
+                f.currency, pa.pa_name, m.total_tvpi, m.net_tvpi, m.net_irr, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
+            FROM funds f
+            LEFT JOIN gps g ON f.gp_id = g.gp_id
+            LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
+            LEFT JOIN fund_metrics_history m ON f.fund_id = m.fund_id AND m.reporting_date = %s
+            WHERE f.fund_id IS NOT NULL 
+            ORDER BY f.fund_id, f.fund_name
+            """
+            return pd.read_sql_query(query, conn, params=(quarter_date,))
+        elif year:
+            query = """
+            SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
+                f.currency, pa.pa_name, m.total_tvpi, m.net_tvpi, m.net_irr, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
+            FROM funds f
+            LEFT JOIN gps g ON f.gp_id = g.gp_id
+            LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
+            LEFT JOIN (
+                SELECT fund_id, MAX(reporting_date) as max_date 
+                FROM fund_metrics_history
+                WHERE EXTRACT(YEAR FROM reporting_date) = %s 
+                GROUP BY fund_id
+            ) latest ON f.fund_id = latest.fund_id
+            LEFT JOIN fund_metrics_history m ON f.fund_id = m.fund_id AND m.reporting_date = latest.max_date
+            WHERE f.fund_id IS NOT NULL 
+            ORDER BY f.fund_id, f.fund_name
+            """
+            return pd.read_sql_query(query, conn, params=(year,))
+        else:
+            return load_all_funds_cached(_conn_id)
 
 
 def format_quarter(date_str):
@@ -1197,7 +1204,7 @@ def show_main_app():
                                 
                                 st.subheader("Portfolio Companies")
                                 if report_date:
-                                    portfolio = get_portfolio_data_for_date(conn, fund_id, report_date)
+                                    portfolio = get_portfolio_data_for_date_cached(id(conn), fund_id, report_date)
                                     if not portfolio.empty:
                                         portfolio['Total TVPI'] = portfolio['realized_tvpi'] + portfolio['unrealized_tvpi']
                                         portfolio = portfolio.rename(columns={'company_name': 'Company', 'invested_amount': 'Invested', 'realized_tvpi': 'Realized', 'unrealized_tvpi': 'Unrealized'})
