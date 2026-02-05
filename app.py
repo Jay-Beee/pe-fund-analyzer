@@ -827,9 +827,9 @@ def show_main_app():
     
     st.markdown("---")
 
-    try:
-        conn = get_db_connection()
-        
+    conn = get_db_connection() 
+
+    try:     
         # Datenbank initialisieren
         initialize_database(conn)
         
