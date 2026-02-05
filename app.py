@@ -1132,7 +1132,7 @@ def _create_mekko_chart_internal(fund_id, fund_name, reporting_date=None):
         f"Gross TVPI: {gross_tvpi_str}\n"
         f"Net TVPI: {net_tvpi_str}\n"
         f"Net IRR: {net_irr_str}\n"
-        f"──────────────────\n"
+        f"───────────────────────────\n"
         f"Top 5 Anteil am Gesamtfonds: {top5_value_pct:.1f}%\n"
         f"Top 5 Anteil des investierten Kapitals: {top5_width_pct:.1f}%\n"
         f"Realisierter Anteil gesamt: {realized_pct:.1f}%\n"
@@ -1470,6 +1470,7 @@ def show_main_app():
                             'unrealized_tvpi': 'Unrealized TVPI',
                             'investment_date': 'Investitionsdatum',
                             'exit_date': 'Exitdatum',
+                            'ownership': 'Ownership',                            
                             'entry_multiple': 'Entry Multiple',
                             'gross_irr': 'Gross IRR'
                         })
