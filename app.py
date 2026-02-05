@@ -635,7 +635,7 @@ def get_latest_date_for_year_per_fund_cached(_conn_id, year, fund_ids_tuple=None
 def get_portfolio_data_for_date_cached(_conn_id, fund_id, reporting_date):
     """Lädt Portfolio-Daten für ein Datum - gecached
     
-        Args:
+    Args:
         _conn_id: Connection ID für Cache-Invalidierung
         fund_id: Fund ID
         reporting_date: Optional - wenn None, werden aktuelle Daten geladen
