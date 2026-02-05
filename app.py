@@ -942,25 +942,72 @@ def wrap_label(text, max_chars=12, max_lines=2, base_fontsize=11):
     fontsize = base_fontsize * shrink_factor
     return "\n".join(lines), fontsize
 
-
-def create_mekko_chart(fund_id, fund_name, _conn_id, reporting_date=None):
+def get_mekko_chart_cached(fund_id, fund_name, reporting_date=None):
     """
-    Erstellt Mekko Chart (NICHT gecached!)
+    Erstellt oder lädt Mekko Chart aus Session State.
+    Charts werden nur 1x pro Session erstellt und dann wiederverwendet.
+    
+    Args:
+        fund_id: Fund ID
+        fund_name: Fund Name  
+        reporting_date: Optional - Stichtag für historische Daten
+    
+    Returns:
+        matplotlib Figure oder None
     """
+    # Session State für Charts initialisieren
+    if 'mekko_charts' not in st.session_state:
+        st.session_state.mekko_charts = {}
+    
+    # Cache-Key erstellen
+    cache_key = f"{fund_id}_{reporting_date}"
+    
+    # Prüfen ob Chart bereits existiert
+    if cache_key in st.session_state.mekko_charts:
+        return st.session_state.mekko_charts[cache_key]
+    
+    # Chart erstellen und speichern
+    fig = _create_mekko_chart_internal(fund_id, fund_name, reporting_date)
+    st.session_state.mekko_charts[cache_key] = fig
+    
+    return fig
 
-    df = get_mekko_chart_data(_conn_id, fund_id, reporting_date)
 
+def _create_mekko_chart_internal(fund_id, fund_name, reporting_date=None):
+    """
+    Interne Funktion: Erstellt das Mekko Chart.
+    Wird nur aufgerufen wenn Chart nicht im Cache ist.
+    """
+    # Daten laden
+    with get_connection() as conn:
+        if reporting_date:
+            query = """
+            SELECT company_name, invested_amount, realized_tvpi, unrealized_tvpi
+            FROM portfolio_companies_history
+            WHERE fund_id = %s AND reporting_date = %s
+            ORDER BY (realized_tvpi + unrealized_tvpi) DESC
+            """
+            df = pd.read_sql_query(query, conn, params=(fund_id, reporting_date))
+        else:
+            query = """
+            SELECT company_name, invested_amount, realized_tvpi, unrealized_tvpi
+            FROM portfolio_companies
+            WHERE fund_id = %s
+            ORDER BY (realized_tvpi + unrealized_tvpi) DESC
+            """
+            df = pd.read_sql_query(query, conn, params=(fund_id,))
+    
     if df.empty:
         return None
-
+    
     title_suffix = f"\n(Stichtag: {reporting_date})" if reporting_date else ""
-
+    
     categories = df["company_name"].tolist()
     widths = df["invested_amount"].tolist()
     values = df[["realized_tvpi", "unrealized_tvpi"]].values.tolist()
-
+    
     fig, ax = plt.subplots(figsize=(14, 7))
-
+    
     total_width = sum(widths)
     x_start = 0
     REAL_COLOR = "darkblue"
@@ -1087,6 +1134,14 @@ def create_mekko_chart(fund_id, fund_name, _conn_id, reporting_date=None):
     plt.tight_layout()
     return fig
 
+def clear_mekko_cache():
+    """Löscht den Mekko Chart Cache (z.B. nach Datenänderung)"""
+    if 'mekko_charts' in st.session_state:
+        # Alle Figures schließen um Speicher freizugeben
+        for fig in st.session_state.mekko_charts.values():
+            if fig is not None:
+                plt.close(fig)
+        st.session_state.mekko_charts = {}
 
 
 # === HAUPTAPP ===
