@@ -141,16 +141,6 @@ def get_db_connection():
     return psycopg2.connect(**DATABASE_CONFIG)
 
 
-# database_utils.py - Zusammengeführte Version
-# Enthält: Datenbank-Initialisierung, Migrationen, gecachte Abfragen und Batch-Funktionen
-
-import streamlit as st
-import pandas as pd
-from datetime import date, datetime
-import matplotlib.pyplot as plt
-from matplotlib.patches import Patch
-from matplotlib.ticker import FuncFormatter
-
 # ============================================================================
 # TEIL 1: DATENBANK-INITIALISIERUNG UND SCHEMA-MANAGEMENT
 # ============================================================================
@@ -643,15 +633,30 @@ def get_latest_date_for_year_per_fund_cached(_conn_id, year, fund_ids_tuple=None
 
 @st.cache_data(ttl=300)
 def get_portfolio_data_for_date_cached(_conn_id, fund_id, reporting_date):
-    """Lädt Portfolio-Daten für ein Datum - gecached"""
+    """Lädt Portfolio-Daten für ein Datum - gecached
+    
+        Args:
+        _conn_id: Connection ID für Cache-Invalidierung
+        fund_id: Fund ID
+        reporting_date: Optional - wenn None, werden aktuelle Daten geladen
+    """
     with get_connection() as conn:
-        query = """
-        SELECT company_name, invested_amount, realized_tvpi, unrealized_tvpi
-        FROM portfolio_companies_history
-        WHERE fund_id = %s AND reporting_date = %s
-        ORDER BY (realized_tvpi + unrealized_tvpi) DESC
-        """
-        return pd.read_sql_query(query, conn, params=(fund_id, reporting_date))
+        if reporting_date:
+            query = """
+            SELECT company_name, invested_amount, realized_tvpi, unrealized_tvpi
+            FROM portfolio_companies_history
+            WHERE fund_id = %s AND reporting_date = %s
+            ORDER BY (realized_tvpi + unrealized_tvpi) DESC
+            """
+            return pd.read_sql_query(query, conn, params=(fund_id, reporting_date))
+        else:
+            query = """
+            SELECT company_name, invested_amount, realized_tvpi, unrealized_tvpi
+            FROM portfolio_companies
+            WHERE fund_id = %s
+            ORDER BY (realized_tvpi + unrealized_tvpi) DESC
+            """
+            return pd.read_sql_query(query, conn, params=(fund_id,))        
 
 
 @st.cache_data(ttl=300)
