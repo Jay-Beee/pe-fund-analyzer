@@ -988,6 +988,14 @@ def _create_mekko_chart_internal(fund_id, fund_name, reporting_date=None):
             ORDER BY (realized_tvpi + unrealized_tvpi) DESC
             """
             df = pd.read_sql_query(query, conn, params=(fund_id, reporting_date))
+            
+            # Fund-Metriken laden (historisch)
+            metrics_query = """
+            SELECT total_tvpi, net_tvpi, net_irr
+            FROM fund_metrics_history
+            WHERE fund_id = %s AND reporting_date = %s
+            """
+            metrics_df = pd.read_sql_query(metrics_query, conn, params=(fund_id, reporting_date))
         else:
             query = """
             SELECT company_name, invested_amount, realized_tvpi, unrealized_tvpi
@@ -996,6 +1004,24 @@ def _create_mekko_chart_internal(fund_id, fund_name, reporting_date=None):
             ORDER BY (realized_tvpi + unrealized_tvpi) DESC
             """
             df = pd.read_sql_query(query, conn, params=(fund_id,))
+            
+            # Fund-Metriken laden (aktuell)
+            metrics_query = """
+            SELECT total_tvpi, net_tvpi, net_irr
+            FROM fund_metrics
+            WHERE fund_id = %s
+            """
+            metrics_df = pd.read_sql_query(metrics_query, conn, params=(fund_id,))
+        
+        # Metriken extrahieren (mit Fallback auf None)
+        if not metrics_df.empty:
+            gross_tvpi = metrics_df['total_tvpi'].iloc[0]
+            net_tvpi = metrics_df['net_tvpi'].iloc[0]
+            net_irr = metrics_df['net_irr'].iloc[0]
+        else:
+            gross_tvpi = None
+            net_tvpi = None
+            net_irr = None
     
     if df.empty:
         return None
@@ -1097,7 +1123,16 @@ def _create_mekko_chart_internal(fund_id, fund_name, reporting_date=None):
     loss_invested_ccy = sum(widths[i] for i in range(len(values)) if sum(values[i]) < 1.0)
     loss_ratio = loss_invested_ccy / total_invested_ccy * 100 if total_invested_ccy > 0 else 0
 
+    # Metriken formatieren (mit "-" als Fallback)
+    gross_tvpi_str = f"{gross_tvpi:.2f}x" if gross_tvpi is not None else "-"
+    net_tvpi_str = f"{net_tvpi:.2f}x" if net_tvpi is not None else "-"
+    net_irr_str = f"{net_irr:.1f}%" if net_irr is not None else "-"
+    
     textstr = (
+        f"Gross TVPI: {gross_tvpi_str}\n"
+        f"Net TVPI: {net_tvpi_str}\n"
+        f"Net IRR: {net_irr_str}\n"
+        f"──────────────────\n"
         f"Top 5 Anteil am Gesamtfonds: {top5_value_pct:.1f}%\n"
         f"Top 5 Anteil des investierten Kapitals: {top5_width_pct:.1f}%\n"
         f"Realisierter Anteil gesamt: {realized_pct:.1f}%\n"
