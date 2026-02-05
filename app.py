@@ -584,24 +584,24 @@ def get_latest_date_for_year_per_fund_cached(_conn_id, year, fund_ids=None):
 @st.cache_data(ttl=60)
 def get_portfolio_data_for_date_cached(_conn_id, fund_id, reporting_date):
     with get_connection() as conn:
-    query = """
-    SELECT company_name, invested_amount, realized_tvpi, unrealized_tvpi
-    FROM portfolio_companies_history
-    WHERE fund_id = %s AND reporting_date = %s
-    ORDER BY (realized_tvpi + unrealized_tvpi) DESC
-    """
-    return pd.read_sql_query(query, conn, params=(fund_id, reporting_date))
+        query = """
+        SELECT company_name, invested_amount, realized_tvpi, unrealized_tvpi
+        FROM portfolio_companies_history
+        WHERE fund_id = %s AND reporting_date = %s
+        ORDER BY (realized_tvpi + unrealized_tvpi) DESC
+        """
+        return pd.read_sql_query(query, conn, params=(fund_id, reporting_date))
 
 
 @st.cache_data(ttl=60)
 def get_fund_metrics_for_date_cached(_conn_id, fund_id, reporting_date):
     with get_connection() as conn:
-    query = """
-    SELECT total_tvpi, net_tvpi, net_irr, dpi, top5_value_concentration, top5_capital_concentration,
-           loss_ratio, realized_percentage, num_investments
-    FROM fund_metrics_history WHERE fund_id = %s AND reporting_date = %s
-    """
-    return pd.read_sql_query(query, conn, params=(fund_id, reporting_date))
+        query = """
+        SELECT total_tvpi, net_tvpi, net_irr, dpi, top5_value_concentration, top5_capital_concentration,
+            loss_ratio, realized_percentage, num_investments
+        FROM fund_metrics_history WHERE fund_id = %s AND reporting_date = %s
+        """
+        return pd.read_sql_query(query, conn, params=(fund_id, reporting_date))
 
 
 def wrap_label(text, max_chars=12, max_lines=2, base_fontsize=11):
