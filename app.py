@@ -1348,7 +1348,7 @@ def show_main_app():
                             fund_id = selected_fund_ids[i]
                             fund_name = selected_fund_names[i]
                             report_date = fund_reporting_dates.get(fund_id)
-                            fig = get_mekko_chart_cached(fund_id, fund_name, conn, report_date)
+                            fig = get_mekko_chart_cached(fund_id, fund_name, report_date)
                             if fig:
                                 st.pyplot(fig)
                                 plt.close()
@@ -1357,7 +1357,7 @@ def show_main_app():
                                 fund_id = selected_fund_ids[i + 1]
                                 fund_name = selected_fund_names[i + 1]
                                 report_date = fund_reporting_dates.get(fund_id)
-                                fig = get_mekko_chart_cached(fund_id, fund_name, conn, report_date)
+                                fig = get_mekko_chart_cached(fund_id, fund_name, report_date)
                                 if fig:
                                     st.pyplot(fig, bbox_inches='tight', pad_inches=0.1)
                                     plt.close()
