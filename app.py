@@ -915,151 +915,150 @@ def wrap_label(text, max_chars=12, max_lines=2, base_fontsize=11):
     return "\n".join(lines), fontsize
 
 
-@st.cache_data(ttl=300)
-def _create_mekko_chart_cached(_conn_id, fund_id, fund_name, reporting_date=None):
+def create_mekko_chart(fund_id, fund_name, _conn_id, reporting_date=None):
     """
-    Interne gecachte Funktion für Mekko-Chart Erstellung.
-    Gibt die Figure zurück - der Aufrufer muss plt.close() aufrufen!
-    
-    Args:
-        _conn_id: Connection ID für Cache-Invalidierung
-        fund_id: ID des Funds
-        fund_name: Name des Funds
-        reporting_date: Optional - Stichtag für historische Daten
-    
-    Returns:
-        matplotlib Figure oder None wenn keine Daten vorhanden
+    Erstellt Mekko Chart (NICHT gecached!)
     """
-    if reporting_date:
-        df = get_portfolio_data_for_date_cached(_conn_id, fund_id, reporting_date)
-        title_suffix = f"\n(Stichtag: {reporting_date})"
-    else:
-        df = get_portfolio_data_for_date_cached(_conn_id, fund_id, None)
-        title_suffix = ""
-    
+
+    df = get_mekko_chart_data(_conn_id, fund_id, reporting_date)
+
     if df.empty:
         return None
-    
+
+    title_suffix = f"\n(Stichtag: {reporting_date})" if reporting_date else ""
+
     categories = df["company_name"].tolist()
     widths = df["invested_amount"].tolist()
     values = df[["realized_tvpi", "unrealized_tvpi"]].values.tolist()
-    
+
     fig, ax = plt.subplots(figsize=(14, 7))
+
     total_width = sum(widths)
     x_start = 0
     REAL_COLOR = "darkblue"
     UNREAL_COLOR = "lightskyblue"
     max_height = max(map(sum, values)) if values else 1
 
+    # --- Bars ---
     for i, cat in enumerate(categories):
         cat_width = widths[i]
         bottom = 0
         category_total = sum(values[i])
+
         for j, val in enumerate(values[i]):
             color = REAL_COLOR if j == 0 else UNREAL_COLOR
-            ax.bar(x_start, val, width=cat_width, bottom=bottom, color=color, edgecolor='black', align='edge')
+
+            ax.bar(
+                x_start, val,
+                width=cat_width,
+                bottom=bottom,
+                color=color,
+                edgecolor='black',
+                align='edge'
+            )
+
             if val > 0:
                 pct = val / category_total * 100 if category_total > 0 else 0
-                ax.text(x_start + cat_width / 2, bottom + val / 2, f"{pct:.1f}%",
-                        ha="center", va="center", fontsize=10, color="white" if color == REAL_COLOR else "black")
+                ax.text(
+                    x_start + cat_width / 2,
+                    bottom + val / 2,
+                    f"{pct:.1f}%",
+                    ha="center",
+                    va="center",
+                    fontsize=10,
+                    color="white" if color == REAL_COLOR else "black"
+                )
+
             bottom += val
+
+        # Firmenlabels
         label_y_base = -max_height * 0.08
         label_y_offset = max_height * 0.04
         label_y = label_y_base if i % 2 == 0 else label_y_base - label_y_offset
         wrapped_text, dyn_fontsize = wrap_label(cat)
-        ax.text(x_start + cat_width / 2, label_y, wrapped_text, ha="center", va="top", fontsize=dyn_fontsize, fontweight="bold")
+
+        ax.text(
+            x_start + cat_width / 2,
+            label_y,
+            wrapped_text,
+            ha="center",
+            va="top",
+            fontsize=dyn_fontsize,
+            fontweight="bold"
+        )
+
         x_start += cat_width
 
-    # Metriken berechnen
+    # --- Kennzahlen ---
     total_value_ccy = 0
     total_realized_ccy = 0
     company_total_values_ccy = []
+
     for i in range(len(values)):
         invested = widths[i]
         realized_ccy = values[i][0] * invested
         unrealized_ccy = values[i][1] * invested
         total_ccy = realized_ccy + unrealized_ccy
+
         total_realized_ccy += realized_ccy
         total_value_ccy += total_ccy
         company_total_values_ccy.append(total_ccy)
 
     realized_pct = total_realized_ccy / total_value_ccy * 100 if total_value_ccy > 0 else 0
-    sorted_idx_value = sorted(range(len(company_total_values_ccy)), key=lambda i: company_total_values_ccy[i], reverse=True)
-    top5_value_ccy = sum([company_total_values_ccy[i] for i in sorted_idx_value[:5]])
+
+    sorted_idx_value = sorted(
+        range(len(company_total_values_ccy)),
+        key=lambda i: company_total_values_ccy[i],
+        reverse=True
+    )
+
+    top5_value_ccy = sum(company_total_values_ccy[i] for i in sorted_idx_value[:5])
     top5_value_pct = top5_value_ccy / sum(company_total_values_ccy) * 100 if company_total_values_ccy else 0
-    top5_width_ccy = sum([widths[i] for i in sorted_idx_value[:5]])
+
+    top5_width_ccy = sum(widths[i] for i in sorted_idx_value[:5])
     top5_width_pct = top5_width_ccy / sum(widths) * 100 if widths else 0
+
     total_invested_ccy = sum(widths)
     loss_invested_ccy = sum(widths[i] for i in range(len(values)) if sum(values[i]) < 1.0)
     loss_ratio = loss_invested_ccy / total_invested_ccy * 100 if total_invested_ccy > 0 else 0
 
-    # Info-Box
-    textstr = f"Top 5 Anteil am Gesamtfonds: {top5_value_pct:.1f}%\nTop 5 Anteil des investierten Kapitals: {top5_width_pct:.1f}%\nRealisierter Anteil gesamt: {realized_pct:.1f}%\nLoss ratio (<1.0x): {loss_ratio:.1f}%"
+    textstr = (
+        f"Top 5 Anteil am Gesamtfonds: {top5_value_pct:.1f}%\n"
+        f"Top 5 Anteil des investierten Kapitals: {top5_width_pct:.1f}%\n"
+        f"Realisierter Anteil gesamt: {realized_pct:.1f}%\n"
+        f"Loss ratio (<1.0x): {loss_ratio:.1f}%"
+    )
+
     props = dict(boxstyle='round', facecolor='whitesmoke', alpha=0.9)
     ax.text(1.02, 0.5, textstr, transform=ax.transAxes, fontsize=10, va='center', bbox=props)
-    
-    # Formatierung
+
+    # --- Formatierung ---
     ax.set_xlim(0, total_width)
     ax.set_ylabel("TVPI")
-    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, p: f"{v:.2f}x"))
+    ax.yaxis.set_major_formatter(FuncFormatter(tvpi_formatter))
     ax.set_title(fund_name + title_suffix, fontsize=15, fontweight="bold")
-    ax.text(0.5, 0.95, "Höhe = Gesamtwertschöpfung (Realisiert + Unrealisiert);\nBreite = Investiertes Kapital; Sortiert nach TVPI (absteigend)",
-            ha="center", va="bottom", fontsize=9, color="gray", transform=ax.transAxes, linespacing=1.4)
+
+    ax.text(
+        0.5, 0.95,
+        "Höhe = Gesamtwertschöpfung (Realisiert + Unrealisiert);\n"
+        "Breite = Investiertes Kapital; Sortiert nach TVPI (absteigend)",
+        ha="center", va="bottom", fontsize=9, color="gray",
+        transform=ax.transAxes, linespacing=1.4
+    )
+
     ax.set_xticks([])
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    
-    # Legende
-    patches = [Patch(facecolor=REAL_COLOR, edgecolor="black", label="Realisiert"),
-               Patch(facecolor=UNREAL_COLOR, edgecolor="black", label="Unrealisiert")]
+
+    patches = [
+        Patch(facecolor=REAL_COLOR, edgecolor="black", label="Realisiert"),
+        Patch(facecolor=UNREAL_COLOR, edgecolor="black", label="Unrealisiert")
+    ]
     ax.legend(handles=patches, title="Status", loc="upper left", bbox_to_anchor=(1.02, 1))
+
     plt.tight_layout()
-    
     return fig
 
-
-def create_mekko_chart(fund_id, fund_name, _conn_id, reporting_date=None):
-    """
-    Wrapper-Funktion für Mekko-Chart mit Caching.
-    Nutzt die gecachte interne Funktion und gibt die Figure zurück.
-    
-    Args:
-        fund_id: ID des Funds
-        fund_name: Name des Funds
-        _conn_id: Connection ID für Cache-Invalidierung (REQUIRED)
-        reporting_date: Optional - Stichtag für historische Daten
-    
-    Returns:
-        matplotlib Figure oder None wenn keine Daten vorhanden
-        
-    Usage:
-        fig = create_mekko_chart(fund_id, fund_name, _conn_id, reporting_date)
-        if fig:
-            st.pyplot(fig)
-            plt.close(fig)  # WICHTIG: Speicher freigeben!
-    """
-    return _create_mekko_chart_cached(_conn_id, fund_id, fund_name, reporting_date)
-
-
-def display_mekko_chart(fund_id, fund_name, _conn_id, reporting_date=None):
-    """
-    Convenience-Funktion: Erstellt und zeigt Mekko-Chart an, räumt automatisch auf.
-    
-    Args:
-        fund_id: ID des Funds
-        fund_name: Name des Funds
-        _conn_id: Connection ID für Cache-Invalidierung
-        reporting_date: Optional - Stichtag für historische Daten
-    
-    Returns:
-        True wenn Chart angezeigt wurde, False wenn keine Daten
-    """
-    fig = _create_mekko_chart_cached(_conn_id, fund_id, fund_name, reporting_date)
-    if fig:
-        st.pyplot(fig)
-        plt.close(fig)  # Speicher freigeben
-        return True
-    return False
 
 
 # === HAUPTAPP ===
