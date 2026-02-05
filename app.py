@@ -888,16 +888,16 @@ def show_main_app():
             st.rerun()
         
         if date_mode == "Aktuell":
-            all_funds_df = load_all_funds(conn)
+            all_funds_df = load_all_funds_cached(conn_id)
             current_date_info = "Aktuelle Daten"
         elif date_mode == "Jahr" and selected_year:
-            all_funds_df = load_funds_with_history_metrics(conn, year=selected_year)
+            all_funds_df = load_funds_with_history_metrics_cached(conn_id, year=selected_year)
             current_date_info = f"Jahr {selected_year} (letzte verfügbare Daten)"
         elif date_mode == "Quartal" and selected_reporting_date:
-            all_funds_df = load_funds_with_history_metrics(conn, quarter_date=selected_reporting_date)
+            all_funds_df = load_funds_with_history_metrics_cached(conn_id, quarter_date=selected_reporting_date)
             current_date_info = f"Stichtag: {selected_reporting_date}"
         else:
-            all_funds_df = load_all_funds(conn)
+            all_funds_df = load_all_funds_cached(conn_id)
             current_date_info = "Aktuelle Daten"
         
         # Duplikate entfernen - nur ein Eintrag pro Fund
