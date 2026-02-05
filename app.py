@@ -861,8 +861,8 @@ def show_main_app():
             st.info(f"ℹ️ Bestehende Daten wurden mit Stichtag {migrated_date} migriert.")
         
         conn_id = id(conn)
-        available_years = get_available_years(conn_id)
-        available_dates = get_available_reporting_dates(conn_id)
+        available_years = get_available_years_cached(conn_id)
+        available_dates = get_available_reporting_dates_cached(conn_id)
         
         st.sidebar.header("🔍 Filter & Auswahl")
         st.sidebar.subheader("📅 Stichtag")
