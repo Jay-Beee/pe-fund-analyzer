@@ -890,6 +890,34 @@ def get_portfolio_data_for_funds_batch(_conn_id, fund_ids_tuple, reporting_dates
 # TEIL 6: VISUALISIERUNG (MEKKO CHART)
 # ============================================================================
 
+@st.cache_data(ttl=300)
+def get_mekko_chart_data(_conn_id, fund_id, reporting_date=None):
+    """
+    Lädt Portfolio-Daten für Mekko Chart - GECACHED.
+    """
+    with get_connection() as conn:
+        if reporting_date:
+            query = """
+            SELECT company_name, invested_amount, realized_tvpi, unrealized_tvpi
+            FROM portfolio_companies_history
+            WHERE fund_id = %s AND reporting_date = %s
+            ORDER BY (realized_tvpi + unrealized_tvpi) DESC
+            """
+            return pd.read_sql_query(query, conn, params=(fund_id, reporting_date))
+        else:
+            query = """
+            SELECT company_name, invested_amount, realized_tvpi, unrealized_tvpi
+            FROM portfolio_companies
+            WHERE fund_id = %s
+            ORDER BY (realized_tvpi + unrealized_tvpi) DESC
+            """
+            return pd.read_sql_query(query, conn, params=(fund_id,))
+
+
+def tvpi_formatter(v, p):
+    """Formatter für TVPI Y-Achse"""
+    return f"{v:.2f}x"
+
 def wrap_label(text, max_chars=12, max_lines=2, base_fontsize=11):
     """Bricht Text für Chart-Labels um"""
     words = text.split()
