@@ -910,27 +910,26 @@ def wrap_label(text, max_chars=12, max_lines=2, base_fontsize=11):
     return "\n".join(lines), fontsize
 
 
-def create_mekko_chart(fund_id, fund_name, conn, reporting_date=None, _conn_id=None):
+@st.cache_data(ttl=300)
+def _create_mekko_chart_cached(_conn_id, fund_id, fund_name, reporting_date=None):
     """
-    Erstellt ein Mekko-Chart für einen Fund.
+    Interne gecachte Funktion für Mekko-Chart Erstellung.
+    Gibt die Figure zurück - der Aufrufer muss plt.close() aufrufen!
     
     Args:
+        _conn_id: Connection ID für Cache-Invalidierung
         fund_id: ID des Funds
         fund_name: Name des Funds
-        conn: Datenbankverbindung (wird nur verwendet wenn reporting_date=None)
         reporting_date: Optional - Stichtag für historische Daten
-        _conn_id: Optional - Connection ID für gecachte Abfragen
     
     Returns:
         matplotlib Figure oder None wenn keine Daten vorhanden
     """
-    if reporting_date and _conn_id:
+    if reporting_date:
         df = get_portfolio_data_for_date_cached(_conn_id, fund_id, reporting_date)
         title_suffix = f"\n(Stichtag: {reporting_date})"
     else:
-        query = """SELECT company_name, invested_amount, realized_tvpi, unrealized_tvpi
-        FROM portfolio_companies WHERE fund_id = %s ORDER BY (realized_tvpi + unrealized_tvpi) DESC"""
-        df = pd.read_sql_query(query, conn, params=(fund_id,))
+        df = get_portfolio_data_for_date_cached(_conn_id, fund_id, None)
         title_suffix = ""
     
     if df.empty:
@@ -1012,6 +1011,50 @@ def create_mekko_chart(fund_id, fund_name, conn, reporting_date=None, _conn_id=N
     plt.tight_layout()
     
     return fig
+
+
+def create_mekko_chart(fund_id, fund_name, _conn_id, reporting_date=None):
+    """
+    Wrapper-Funktion für Mekko-Chart mit Caching.
+    Nutzt die gecachte interne Funktion und gibt die Figure zurück.
+    
+    Args:
+        fund_id: ID des Funds
+        fund_name: Name des Funds
+        _conn_id: Connection ID für Cache-Invalidierung (REQUIRED)
+        reporting_date: Optional - Stichtag für historische Daten
+    
+    Returns:
+        matplotlib Figure oder None wenn keine Daten vorhanden
+        
+    Usage:
+        fig = create_mekko_chart(fund_id, fund_name, _conn_id, reporting_date)
+        if fig:
+            st.pyplot(fig)
+            plt.close(fig)  # WICHTIG: Speicher freigeben!
+    """
+    return _create_mekko_chart_cached(_conn_id, fund_id, fund_name, reporting_date)
+
+
+def display_mekko_chart(fund_id, fund_name, _conn_id, reporting_date=None):
+    """
+    Convenience-Funktion: Erstellt und zeigt Mekko-Chart an, räumt automatisch auf.
+    
+    Args:
+        fund_id: ID des Funds
+        fund_name: Name des Funds
+        _conn_id: Connection ID für Cache-Invalidierung
+        reporting_date: Optional - Stichtag für historische Daten
+    
+    Returns:
+        True wenn Chart angezeigt wurde, False wenn keine Daten
+    """
+    fig = _create_mekko_chart_cached(_conn_id, fund_id, fund_name, reporting_date)
+    if fig:
+        st.pyplot(fig)
+        plt.close(fig)  # Speicher freigeben
+        return True
+    return False
 
 
 # === HAUPTAPP ===
