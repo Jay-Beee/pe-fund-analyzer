@@ -1436,7 +1436,7 @@ def show_main_app():
                                     portfolio['Total TVPI'] = portfolio['Total TVPI'].apply(lambda x: f"{x:.2f}x")
                                     portfolio['Realized'] = portfolio['Realized'].apply(lambda x: f"{x:.2f}x")
                                     portfolio['Unrealized'] = portfolio['Unrealized'].apply(lambda x: f"{x:.2f}x")
-                                    st.dataframe(portfolio, width='stretch, hide_index=True)
+                                    st.dataframe(portfolio, width='stretch', hide_index=True)
                                 else:
                                     st.info("Keine Portfolio Companies vorhanden")
                             
