@@ -980,7 +980,7 @@ def show_main_app():
             
             fund_reporting_dates = {}
             if date_mode == "Jahr" and selected_year:
-                fund_reporting_dates = get_latest_date_for_year_per_fund(conn, selected_year, selected_fund_ids)
+                fund_reporting_dates = get_latest_date_for_year_per_fund_cached(conn_id, selected_year, selected_fund_ids)
             elif date_mode == "Quartal" and selected_reporting_date:
                 fund_reporting_dates = {fid: selected_reporting_date for fid in selected_fund_ids}
           
@@ -1186,7 +1186,7 @@ def show_main_app():
                             """, conn, params=(fund_id,))
                             
                             if report_date:
-                                metrics = get_fund_metrics_for_date(conn, fund_id, report_date)
+                                metrics = get_fund_metrics_for_date_cached(conn_id, fund_id, report_date)
                             else:
                                 metrics = pd.read_sql_query("SELECT total_tvpi, net_tvpi, net_irr, dpi, num_investments FROM fund_metrics WHERE fund_id = %s", conn, params=(fund_id,))
                             
