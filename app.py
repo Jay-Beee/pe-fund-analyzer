@@ -545,16 +545,20 @@ def get_or_create_placement_agent(conn, pa_name):
         return cursor.fetchone()[0]
 
 
-def get_available_reporting_dates(conn):
-    with conn.cursor() as cursor:
-        cursor.execute("SELECT DISTINCT reporting_date FROM portfolio_companies_history ORDER BY reporting_date DESC")
-        return [row[0].strftime('%Y-%m-%d') if isinstance(row[0], (date, datetime)) else row[0] for row in cursor.fetchall()]
+@st.cache_data(ttl=60)
+def get_available_reporting_dates_cached(_conn_id):
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT DISTINCT reporting_date FROM portfolio_companies_history ORDER BY reporting_date DESC")
+            return [row[0].strftime('%Y-%m-%d') if isinstance(row[0], (date, datetime)) else row[0] for row in cursor.fetchall()]
 
 
-def get_available_years(conn):
-    with conn.cursor() as cursor:
-        cursor.execute("SELECT DISTINCT EXTRACT(YEAR FROM reporting_date)::INTEGER as year FROM portfolio_companies_history ORDER BY year DESC")
-        return [int(row[0]) for row in cursor.fetchall() if row[0]]
+@st.cache_data(ttl=60)
+def get_available_years_cached(_conn_id):
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT DISTINCT EXTRACT(YEAR FROM reporting_date)::INTEGER as year FROM portfolio_companies_history ORDER BY year DESC")
+            return [int(row[0]) for row in cursor.fetchall() if row[0]]
 
 
 @st.cache_data(ttl=60)
@@ -626,7 +630,7 @@ def wrap_label(text, max_chars=12, max_lines=2, base_fontsize=11):
 
 def create_mekko_chart(fund_id, fund_name, conn, reporting_date=None):
     if reporting_date:
-        df = get_portfolio_data_for_date(conn, fund_id, reporting_date)
+        df = get_portfolio_data_for_date_cached(_conn_id, fund_id, reporting_date)
         title_suffix = f"\n(Stichtag: {reporting_date})"
     else:
         query = """SELECT company_name, invested_amount, realized_tvpi, unrealized_tvpi
@@ -708,18 +712,20 @@ def create_mekko_chart(fund_id, fund_name, conn, reporting_date=None):
     return fig
 
 
-def load_all_funds(conn):
-    query = """
-    SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
-           f.currency, pa.pa_name, m.total_tvpi, m.net_tvpi, m.net_irr, m.dpi, m.top5_value_concentration, m.loss_ratio
-    FROM funds f
-    LEFT JOIN gps g ON f.gp_id = g.gp_id
-    LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
-    LEFT JOIN fund_metrics m ON f.fund_id = m.fund_id
-    WHERE f.fund_id IS NOT NULL 
-    ORDER BY f.fund_id, f.fund_name
-    """
-    return pd.read_sql_query(query, conn)
+@st.cache_data(ttl=60)
+def load_all_funds_cached(_conn_id):
+    with get_connection() as conn:
+        query = """
+        SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
+            f.currency, pa.pa_name, m.total_tvpi, m.net_tvpi, m.net_irr, m.dpi, m.top5_value_concentration, m.loss_ratio
+        FROM funds f
+        LEFT JOIN gps g ON f.gp_id = g.gp_id
+        LEFT JOIN placement_agents pa ON f.placement_agent_id = pa.pa_id
+        LEFT JOIN fund_metrics m ON f.fund_id = m.fund_id
+        WHERE f.fund_id IS NOT NULL 
+        ORDER BY f.fund_id, f.fund_name
+        """
+        return pd.read_sql_query(query, conn)
 
 
 @st.cache_data(ttl=60)
@@ -804,6 +810,9 @@ def initialize_database(conn):
 def show_main_app():
     """Zeigt die Hauptanwendung nach erfolgreichem Login"""
     
+    import time
+    start_time = time.time()  # ⏱️ Start der Messung
+
     # Header mit User-Info und Logout
     header_col1, header_col2 = st.columns([6, 1])
     with header_col1:
@@ -851,8 +860,9 @@ def show_main_app():
         if migrated_date:
             st.info(f"ℹ️ Bestehende Daten wurden mit Stichtag {migrated_date} migriert.")
         
-        available_years = get_available_years(conn)
-        available_dates = get_available_reporting_dates(conn)
+        conn_id = id(conn)
+        available_years = get_available_years(conn_id)
+        available_dates = get_available_reporting_dates(conn_id)
         
         st.sidebar.header("🔍 Filter & Auswahl")
         st.sidebar.subheader("📅 Stichtag")
@@ -3047,6 +3057,9 @@ def show_main_app():
     st.sidebar.markdown("**PE Fund Analyzer v4.2**")
     st.sidebar.markdown("🔐 Mit Supabase Auth & Rollen")
 
+    # ✅ Messung am Ende der Funktion — nach allem, was Zeit kostet
+    end_time = time.time()
+    st.sidebar.info(f"⏱️ Ladezeit: {end_time - start_time:.2f}s")
 
 # === APP ENTRY POINT ===
 
