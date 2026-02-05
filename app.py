@@ -1436,7 +1436,7 @@ def show_main_app():
                                     portfolio['Total TVPI'] = portfolio['Total TVPI'].apply(lambda x: f"{x:.2f}x")
                                     portfolio['Realized'] = portfolio['Realized'].apply(lambda x: f"{x:.2f}x")
                                     portfolio['Unrealized'] = portfolio['Unrealized'].apply(lambda x: f"{x:.2f}x")
-                                    st.dataframe(portfolio, use_container_width=True, hide_index=True)
+                                    st.dataframe(portfolio, width='stretch, hide_index=True)
                                 else:
                                     st.info("Keine Portfolio Companies vorhanden")
                             
@@ -1535,7 +1535,7 @@ def show_main_app():
                                         ax1.grid(True, alpha=0.3)
                                         ax1.legend(lines, labels, loc='upper left')
                                         plt.tight_layout()
-                                        st.pyplot(fig, use_container_width=False)
+                                        st.pyplot(fig, width='content')
                                         plt.close()
                                 else:
                                     st.info("Keine historischen Daten vorhanden.")
