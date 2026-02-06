@@ -2220,9 +2220,19 @@ def show_main_app():
                                                         funds_data[fund_name]['metadata'][field] = float(val)
                                                     except:
                                                         pass
-                                                elif field in ['net_tvpi', 'net_irr']:
+                                                elif field == 'net_tvpi':
                                                     try:
                                                         funds_data[fund_name]['metadata'][field] = float(val)
+                                                    except:
+                                                        pass
+                                                elif field == 'net_irr':
+                                                    try:
+                                                        # Excel speichert 17% als 0.17 → mit 100 multiplizieren
+                                                        val_float = float(val)
+                                                        if val_float < 1:  # Wahrscheinlich Dezimalformat
+                                                            funds_data[fund_name]['metadata'][field] = val_float * 100
+                                                        else:  # Bereits als Prozentzahl (z.B. 17)
+                                                            funds_data[fund_name]['metadata'][field] = val_float
                                                     except:
                                                         pass
                                                 elif field == 'reporting_date':
