@@ -2096,18 +2096,27 @@ def show_main_app():
                                         gp_delete_fields.add(field)
                                 
                                 # Placement Agent Daten extrahieren
-                                pa_data = {
-                                    'pa_name': get_gp_val('pa_name'),
-                                    'rating': get_gp_val('pa_rating'),
-                                    'headquarters': get_gp_val('pa_headquarters'),
-                                    'website': get_gp_val('pa_website'),
-                                    'last_meeting': get_gp_val('pa_last_meeting'),
-                                    'contact1_name': get_gp_val('pa_contact1_name'),
-                                    'contact1_function': get_gp_val('pa_contact1_function'),
-                                    'contact1_email': get_gp_val('pa_contact1_email'),
-                                    'contact1_phone': get_gp_val('pa_contact1_phone'),
+                                pa_data = {}
+                                pa_delete_fields = set()
+                                
+                                pa_field_mapping = {
+                                    'pa_name': 'pa_name',
+                                    'rating': 'pa_rating',
+                                    'headquarters': 'pa_headquarters',
+                                    'website': 'pa_website',
+                                    'last_meeting': 'pa_last_meeting',
+                                    'contact1_name': 'pa_contact1_name',
+                                    'contact1_function': 'pa_contact1_function',
+                                    'contact1_email': 'pa_contact1_email',
+                                    'contact1_phone': 'pa_contact1_phone',
                                 }
-                            
+                                
+                                for pa_field, gp_col_key in pa_field_mapping.items():
+                                    val, should_delete = get_gp_val(gp_col_key)
+                                    pa_data[pa_field] = val
+                                    if should_delete:
+                                        pa_delete_fields.add(pa_field)
+
                                 if not gp_data['gp_name']:
                                     st.error("❌ GP Name nicht gefunden in Zeile 2!")
                                     st.stop()
@@ -2334,10 +2343,12 @@ def show_main_app():
                             
                                 st.session_state.import_data = {
                                     'gp_data': gp_data,
+                                    'gp_delete_fields': gp_delete_fields,  # NEU
                                     'pa_data': pa_data,
                                     'funds_data': funds_data,
                                     'changes': changes
                                 }
+                                
                                 st.session_state.import_preview = True
                                 st.rerun()
                             
@@ -2532,10 +2543,11 @@ def show_main_app():
                                     try:
                                         with conn.cursor() as cursor:
                                             gp_data = data['gp_data']
+                                            gp_delete_fields = data.get('gp_delete_fields', set())  # NEU
                                             pa_data = data['pa_data']
                                             funds_data = data['funds_data']
                                             selected = st.session_state.selected_changes
-                                        
+                                                                              
                                             # GP anlegen/aktualisieren
                                             cursor.execute("SELECT gp_id FROM gps WHERE gp_name = %s", (gp_data['gp_name'],))
                                             existing_gp = cursor.fetchone()
