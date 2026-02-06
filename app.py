@@ -2221,6 +2221,9 @@ def show_main_app():
                                                     funds_data[fund_name]['metadata'][field] = parse_date(val)
                                                 else:
                                                     funds_data[fund_name]['metadata'][field] = str(val).strip()
+                                
+                                # DEBUG - temporär hinzufügen:
+                                st.write(f"🔍 Debug {fund_name}: net_tvpi={funds_data[fund_name]['metadata'].get('net_tvpi')}, net_irr={funds_data[fund_name]['metadata'].get('net_irr')}")
                 
                                     company_name = None
                                     if 'company_name' in fund_col_map:
