@@ -2225,12 +2225,17 @@ def show_main_app():
                                 
                                     if company_name:
                                         company_data = {'company_name': company_name}
+                                        company_delete_fields = set()  # NEU: Lösch-Felder pro Company
                                     
                                         for field in ['investment_date', 'exit_date', 'ownership', 'invested_amount', 
                                                      'realized_tvpi', 'unrealized_tvpi', 'entry_multiple', 'gross_irr']:
                                             if field in fund_col_map:
                                                 val = row.iloc[fund_col_map[field]]
-                                                if pd.notna(val) and str(val).strip() != '':
+                                                
+                                                # NEU: Lösch-Marker prüfen
+                                                if is_delete_marker(val):
+                                                    company_delete_fields.add(field)
+                                                elif pd.notna(val) and str(val).strip() != '':
                                                     if field in ['investment_date', 'exit_date']:
                                                         company_data[field] = parse_date(val)
                                                     elif field in ['ownership', 'gross_irr']:
@@ -2244,7 +2249,9 @@ def show_main_app():
                                                             company_data[field] = float(val)
                                                         except:
                                                             pass
-                                    
+                                        
+                                        # NEU: Lösch-Felder speichern
+                                        company_data['_delete_fields'] = company_delete_fields
                                         funds_data[fund_name]['companies'].append(company_data)
                             
                                 # Änderungen ermitteln
@@ -2329,18 +2336,29 @@ def show_main_app():
                                             changes['companies'][fund_name][company_name] = []
                                             if existing_company:
                                                 company_dict = dict(zip(company_columns, existing_company))
+                                                company_delete_fields = company.get('_delete_fields', set())  # NEU
+                                                
                                                 for field in ['investment_date', 'exit_date', 'ownership', 'invested_amount',
                                                              'realized_tvpi', 'unrealized_tvpi', 'entry_multiple', 'gross_irr']:
-                                                    new_val = company.get(field)
-                                                    if new_val is not None:
-                                                        old_val = company_dict.get(field)
+                                                    old_val = company_dict.get(field)
+                                                    
+                                                    # NEU: Löschung prüfen
+                                                    if field in company_delete_fields and old_val is not None:
+                                                        changes['companies'][fund_name][company_name].append({
+                                                            'field': field,
+                                                            'old': old_val,
+                                                            'new': '🗑️ [LÖSCHEN]'
+                                                        })
+                                                    # Normale Änderung prüfen
+                                                    elif field in company and company.get(field) is not None:
+                                                        new_val = company.get(field)
                                                         if old_val != new_val and str(old_val) != str(new_val):
                                                             changes['companies'][fund_name][company_name].append({
                                                                 'field': field,
                                                                 'old': old_val,
                                                                 'new': new_val
                                                             })
-                            
+                                                                        
                                 st.session_state.import_data = {
                                     'gp_data': gp_data,
                                     'gp_delete_fields': gp_delete_fields,  # NEU
@@ -2704,11 +2722,20 @@ def show_main_app():
                                                         update_values = []
                                                         comp_key = f"{fund_name}_{company_name}"
                                                         comp_selected = selected['companies'].get(comp_key, {})
+                                                        company_delete_fields = company.get('_delete_fields', set())  # NEU
                                                     
                                                         for field in ['investment_date', 'exit_date', 'ownership', 'invested_amount',
                                                                      'realized_tvpi', 'unrealized_tvpi', 'entry_multiple', 'gross_irr']:
-                                                            if field in company and company[field] is not None:
-                                                                change_key = f"{comp_key}_{field}"
+                                                            change_key = f"{comp_key}_{field}"
+                                                            
+                                                            # NEU: Löschung prüfen
+                                                            if field in company_delete_fields:
+                                                                if change_key not in comp_selected or comp_selected[change_key]:
+                                                                    update_fields.append(f"{field} = %s")
+                                                                    update_values.append(None)  # NULL setzen
+                                                                else:
+                                                                    skipped_changes += 1
+                                                            elif field in company and company[field] is not None:
                                                                 if change_key not in comp_selected or comp_selected[change_key]:
                                                                     update_fields.append(f"{field} = %s")
                                                                     update_values.append(company[field])
