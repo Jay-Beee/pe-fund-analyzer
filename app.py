@@ -1953,6 +1953,22 @@ def show_main_app():
                     # IMPORT EXCEL
                     with admin_tab1:
                         st.subheader("Excel-Datei importieren")
+                        
+                        # Hilfsfunktion für Lösch-Erkennung
+                        def is_delete_marker(val):
+                            """Prüft ob ein Wert ein Lösch-Marker ist"""
+                            if pd.isna(val):
+                                return False
+                            val_str = str(val).strip().upper()
+                            return val_str in ['-', 'DELETE', 'NULL', 'LÖSCHEN', '#CLEAR#']
+                        
+                        def get_value_or_delete(val):
+                            """Gibt (value, should_delete) zurück"""
+                            if pd.isna(val) or str(val).strip() == '':
+                                return None, False  # Leer = nicht ändern
+                            if is_delete_marker(val):
+                                return None, True   # Lösch-Marker = auf NULL setzen
+                            return str(val).strip(), False  # Normaler Wert
                     
                         # Format-Hilfe anzeigen
                         with st.expander("📋 Excel-Format", expanded=False):
@@ -1975,6 +1991,7 @@ def show_main_app():
                         
                             **Hinweise:**
                             - Leere Zellen = Bestehende Daten bleiben erhalten
+                            - `-` oder `DELETE` oder `NULL` = Wert wird gelöscht
                             - Datumsformat: YYYY-MM-DD oder YYYY-MM
                             - Fund-Metadaten (Vintage, Size, etc.) nur bei erster Zeile pro Fund nötig
                             - Placement Agent ist optional - wenn PA Name leer, wird kein PA zugeordnet
@@ -2056,30 +2073,27 @@ def show_main_app():
                             
                                 # GP-Werte extrahieren
                                 def get_gp_val(key):
+                                    """Gibt (value, should_delete) zurück"""
                                     if key in gp_col_map:
                                         val = gp_values.iloc[gp_col_map[key]]
+                                        if is_delete_marker(val):
+                                            return None, True  # Lösch-Marker
                                         if pd.notna(val) and str(val).strip() != '':
-                                            return str(val).strip()
-                                    return None
+                                            return str(val).strip(), False
+                                    return None, False
                             
-                                gp_data = {
-                                    'gp_name': get_gp_val('gp_name'),
-                                    'strategy': get_gp_val('strategy'),
-                                    'rating': get_gp_val('rating'),
-                                    'sector': get_gp_val('sector'),
-                                    'headquarters': get_gp_val('headquarters'),
-                                    'website': get_gp_val('website'),
-                                    'last_meeting': get_gp_val('last_meeting'),
-                                    'next_raise_estimate': get_gp_val('next_raise_estimate'),
-                                    'contact1_name': get_gp_val('contact1_name'),
-                                    'contact1_function': get_gp_val('contact1_function'),
-                                    'contact1_email': get_gp_val('contact1_email'),
-                                    'contact1_phone': get_gp_val('contact1_phone'),
-                                    'contact2_name': get_gp_val('contact2_name'),
-                                    'contact2_function': get_gp_val('contact2_function'),
-                                    'contact2_email': get_gp_val('contact2_email'),
-                                    'contact2_phone': get_gp_val('contact2_phone'),
-                                }
+                                # GP-Daten mit Lösch-Markern extrahieren
+                                gp_data = {}
+                                gp_delete_fields = set()  # Felder die gelöscht werden sollen
+                                
+                                for field in ['gp_name', 'strategy', 'rating', 'sector', 'headquarters', 
+                                             'website', 'last_meeting', 'next_raise_estimate',
+                                             'contact1_name', 'contact1_function', 'contact1_email', 'contact1_phone',
+                                             'contact2_name', 'contact2_function', 'contact2_email', 'contact2_phone']:
+                                    val, should_delete = get_gp_val(field)
+                                    gp_data[field] = val
+                                    if should_delete:
+                                        gp_delete_fields.add(field)
                                 
                                 # Placement Agent Daten extrahieren
                                 pa_data = {
@@ -2235,14 +2249,25 @@ def show_main_app():
                                 
                                     if existing_gp:
                                         gp_dict = dict(zip(gp_columns, existing_gp))
-                                        for field, new_val in gp_data.items():
-                                            if new_val is not None and field in gp_dict:
-                                                old_val = gp_dict.get(field)
-                                                if old_val != new_val and str(old_val) != str(new_val):
+                                        for field in gp_data.keys():
+                                            if field == 'gp_name':
+                                                continue
+                                            old_val = gp_dict.get(field)
+                                            
+                                            # Löschung prüfen
+                                            if field in gp_delete_fields and old_val is not None:
+                                                changes['gp'].append({
+                                                    'field': field,
+                                                    'old': old_val,
+                                                    'new': '🗑️ [LÖSCHEN]'
+                                                })
+                                            # Normale Änderung prüfen
+                                            elif gp_data[field] is not None and field in gp_dict:
+                                                if old_val != gp_data[field] and str(old_val) != str(gp_data[field]):
                                                     changes['gp'].append({
                                                         'field': field,
                                                         'old': old_val,
-                                                        'new': new_val
+                                                        'new': gp_data[field]
                                                     })
                                 
                                     # Fund- und Company-Änderungen prüfen
@@ -2523,7 +2548,14 @@ def show_main_app():
                                                              'last_meeting', 'next_raise_estimate', 'contact1_name',
                                                              'contact1_function', 'contact1_email', 'contact1_phone',
                                                              'contact2_name', 'contact2_function', 'contact2_email', 'contact2_phone']:
-                                                    if gp_data.get(field):
+                                                    # Prüfen ob Feld gelöscht werden soll
+                                                    if field in gp_delete_fields:
+                                                        change_key = f"gp_{field}"
+                                                        if change_key in selected['gp'] and not selected['gp'][change_key]:
+                                                            continue
+                                                        update_fields.append(f"{field} = %s")
+                                                        update_values.append(None)  # NULL setzen
+                                                    elif gp_data.get(field):
                                                         change_key = f"gp_{field}"
                                                         if change_key in selected['gp'] and not selected['gp'][change_key]:
                                                             continue
