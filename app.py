@@ -1319,7 +1319,7 @@ def show_main_app():
                 len(selected_geographies) > 0 or
                 len(selected_vintages) > 0 or
                 len(selected_gps) > 0 or
-                len(selected_pas) > 0 and "(Alle)" not in selected_pas) > 0
+                (len(selected_pas) > 0 and "(Alle)" not in selected_pas)
             )
             
             if any_filter_set:
