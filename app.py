@@ -2222,9 +2222,7 @@ def show_main_app():
                                                 else:
                                                     funds_data[fund_name]['metadata'][field] = str(val).strip()
                                 
-                                # DEBUG - temporär hinzufügen:
-                                st.write(f"🔍 Debug {fund_name}: net_tvpi={funds_data[fund_name]['metadata'].get('net_tvpi')}, net_irr={funds_data[fund_name]['metadata'].get('net_irr')}")
-                
+              
                                     company_name = None
                                     if 'company_name' in fund_col_map:
                                         val = row.iloc[fund_col_map['company_name']]
@@ -2262,6 +2260,9 @@ def show_main_app():
                                         company_data['_delete_fields'] = company_delete_fields
                                         funds_data[fund_name]['companies'].append(company_data)
                             
+                                # DEBUG - temporär hinzufügen:
+                                st.write(f"🔍 Debug {fund_name}: net_tvpi={funds_data[fund_name]['metadata'].get('net_tvpi')}, net_irr={funds_data[fund_name]['metadata'].get('net_irr')}")
+
                                 # Änderungen ermitteln
                                 changes = {'gp': [], 'funds': {}, 'companies': {}}
                             
