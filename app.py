@@ -676,7 +676,7 @@ def load_all_funds_cached(_conn_id):
     """Lädt alle Fonds mit aktuellen Metriken - gecached"""
     with get_connection() as conn:
         query = """
-        SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
+        SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, g.sector, f.vintage_year, f.strategy, f.geography, g.rating,
                f.currency, pa.pa_name, m.total_tvpi, m.net_tvpi, m.net_irr, m.dpi, m.top5_value_concentration, m.loss_ratio
         FROM funds f
         LEFT JOIN gps g ON f.gp_id = g.gp_id
@@ -694,7 +694,7 @@ def load_funds_with_history_metrics_cached(_conn_id, year=None, quarter_date=Non
     with get_connection() as conn:
         if quarter_date:
             query = """
-            SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
+            SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, g.sector, f.vintage_year, f.strategy, f.geography, g.rating,
                    f.currency, pa.pa_name, m.total_tvpi, m.net_tvpi, m.net_irr, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
             FROM funds f
             LEFT JOIN gps g ON f.gp_id = g.gp_id
@@ -706,7 +706,7 @@ def load_funds_with_history_metrics_cached(_conn_id, year=None, quarter_date=Non
             return pd.read_sql_query(query, conn, params=(quarter_date,))
         elif year:
             query = """
-            SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.strategy, f.geography, g.rating,
+            SELECT DISTINCT ON (f.fund_id) f.fund_id, f.fund_name, g.gp_name, g.sector, f.vintage_year, f.strategy, f.geography, g.rating,
                    f.currency, pa.pa_name, m.total_tvpi, m.net_tvpi, m.net_irr, m.dpi, m.top5_value_concentration, m.loss_ratio, m.reporting_date
             FROM funds f
             LEFT JOIN gps g ON f.gp_id = g.gp_id
@@ -738,7 +738,7 @@ def get_fund_info_batch(_conn_id, fund_ids_tuple):
     
     with get_connection() as conn:
         query = """
-        SELECT f.fund_id, f.fund_name, g.gp_name, f.vintage_year, f.fund_size_m, 
+        SELECT f.fund_id, f.fund_name, g.gp_name, g.sector, f.vintage_year, f.fund_size_m, 
                f.currency, f.strategy, f.geography, g.rating, 
                g.last_meeting, g.next_raise_estimate, pa.pa_name, f.notes
         FROM funds f 
@@ -1286,14 +1286,20 @@ def show_main_app():
         else:
             fv = st.session_state.filter_version
             
-            vintage_years = sorted(all_funds_df['vintage_year'].dropna().unique())
-            selected_vintages = st.sidebar.multiselect("Vintage Year", options=vintage_years, default=[], key=f"vintage_{fv}") if vintage_years else []
+            ratings = sorted(all_funds_df['rating'].dropna().unique())
+            selected_ratings = st.sidebar.multiselect("Rating", options=ratings, default=[], key=f"rating_{fv}") if ratings else []
             
             strategies = sorted(all_funds_df['strategy'].dropna().unique())
             selected_strategies = st.sidebar.multiselect("Strategy", options=strategies, default=[], key=f"strategy_{fv}") if strategies else []
             
+            sectors = sorted(all_funds_df['sector'].dropna().unique())
+            selected_sectors = st.sidebar.multiselect("Sektor", options=sectors, default=[], key=f"sector_{fv}") if sectors else []
+            
             geographies = sorted(all_funds_df['geography'].dropna().unique())
             selected_geographies = st.sidebar.multiselect("Geography", options=geographies, default=[], key=f"geography_{fv}") if geographies else []
+            
+            vintage_years = sorted(all_funds_df['vintage_year'].dropna().unique())
+            selected_vintages = st.sidebar.multiselect("Vintage Year", options=vintage_years, default=[], key=f"vintage_{fv}") if vintage_years else []         
             
             gps = sorted(all_funds_df['gp_name'].dropna().unique())
             selected_gps = st.sidebar.multiselect("GP Name", options=gps, default=[], key=f"gp_{fv}") if gps else []
@@ -1305,17 +1311,15 @@ def show_main_app():
             else:
                 selected_pas = []
             
-            ratings = sorted(all_funds_df['rating'].dropna().unique())
-            selected_ratings = st.sidebar.multiselect("Rating", options=ratings, default=[], key=f"rating_{fv}") if ratings else []
-            
 # Prüfen ob mindestens ein Filter gesetzt wurde
             any_filter_set = (
-                len(selected_vintages) > 0 or
+                len(selected_ratings) > 0 or
                 len(selected_strategies) > 0 or
+                len(selected_sectors) > 0 or
                 len(selected_geographies) > 0 or
+                len(selected_vintages) > 0 or
                 len(selected_gps) > 0 or
-                (len(selected_pas) > 0 and "(Alle)" not in selected_pas) or
-                len(selected_ratings) > 0
+                len(selected_pas) > 0 and "(Alle)" not in selected_pas) > 0
             )
             
             if any_filter_set:
@@ -1323,12 +1327,16 @@ def show_main_app():
                 
                 # Filter anwenden
                 filtered_df = all_funds_df.copy()
-                if selected_vintages:
-                    filtered_df = filtered_df[filtered_df['vintage_year'].isin(selected_vintages)]
+                if selected_ratings:
+                    filtered_df = filtered_df[filtered_df['rating'].isin(selected_ratings)]
                 if selected_strategies:
                     filtered_df = filtered_df[filtered_df['strategy'].isin(selected_strategies)]
+                if selected_sectors:
+                    filtered_df = filtered_df[filtered_df['sector'].isin(selected_sectors)]
                 if selected_geographies:
                     filtered_df = filtered_df[filtered_df['geography'].isin(selected_geographies)]
+                if selected_vintages:
+                    filtered_df = filtered_df[filtered_df['vintage_year'].isin(selected_vintages)]
                 if selected_gps:
                     filtered_df = filtered_df[filtered_df['gp_name'].isin(selected_gps)]
                 if selected_pas and "(Alle)" not in selected_pas:
@@ -1337,9 +1345,7 @@ def show_main_app():
                         filtered_df = filtered_df[(filtered_df['pa_name'].isin(pa_filter)) | (filtered_df['pa_name'].isna())]
                     else:
                         filtered_df = filtered_df[filtered_df['pa_name'].isin(selected_pas)]
-                if selected_ratings:
-                    filtered_df = filtered_df[filtered_df['rating'].isin(selected_ratings)]
-                
+                                
                 selected_fund_ids = filtered_df['fund_id'].tolist()
                 selected_fund_names = filtered_df['fund_name'].tolist()
                 
