@@ -2383,7 +2383,7 @@ def show_main_app():
                                     col1, col2 = st.columns([0.05, 0.95])
                                     with col1:
                                         st.session_state.selected_changes['gp'][key] = st.checkbox(
-                                            "", value=st.session_state.selected_changes['gp'][key],
+                                            "Auswählen", value=st.session_state.selected_changes['gp'][key],
                                             key=f"cb_gp_{idx}", label_visibility="collapsed"
                                         )
                                     with col2:
@@ -2407,7 +2407,7 @@ def show_main_app():
                                         col1, col2 = st.columns([0.05, 0.95])
                                         with col1:
                                             st.session_state.selected_changes['funds'][fund_name][key] = st.checkbox(
-                                                "", value=st.session_state.selected_changes['funds'][fund_name][key],
+                                                "Auswählen", value=st.session_state.selected_changes['funds'][fund_name][key],
                                                 key=f"cb_fund_{fund_name}_{idx}", label_visibility="collapsed"
                                             )
                                         with col2:
@@ -2433,7 +2433,7 @@ def show_main_app():
                                             col1, col2 = st.columns([0.05, 0.95])
                                             with col1:
                                                 st.session_state.selected_changes['companies'][comp_key][key] = st.checkbox(
-                                                    "", value=st.session_state.selected_changes['companies'][comp_key][key],
+                                                    "Auswählen", value=st.session_state.selected_changes['companies'][comp_key][key],
                                                     key=f"cb_comp_{comp_key}_{idx}", label_visibility="collapsed"
                                                 )
                                             with col2:
