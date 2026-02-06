@@ -2198,10 +2198,18 @@ def show_main_app():
                                             'companies': []
                                         }
                                 
+                                    # NEU: Lösch-Felder für Fund-Metriken
+                                    if 'metadata_delete_fields' not in funds_data[fund_name]:
+                                        funds_data[fund_name]['metadata_delete_fields'] = set()
+                                    
                                     for field in ['vintage_year', 'fund_size_m', 'currency', 'geography', 'reporting_date', 'net_tvpi', 'net_irr']:
                                         if field in fund_col_map:
                                             val = row.iloc[fund_col_map[field]]
-                                            if pd.notna(val) and str(val).strip():
+                                            
+                                            # NEU: Lösch-Marker prüfen
+                                            if is_delete_marker(val):
+                                                funds_data[fund_name]['metadata_delete_fields'].add(field)
+                                            elif pd.notna(val) and str(val).strip():
                                                 if field == 'vintage_year':
                                                     try:
                                                         funds_data[fund_name]['metadata'][field] = int(float(val))
@@ -2335,22 +2343,39 @@ def show_main_app():
                                             
                                             new_net_tvpi = fund_info['metadata'].get('net_tvpi')
                                             new_net_irr = fund_info['metadata'].get('net_irr')
+                                            metadata_delete_fields = fund_info.get('metadata_delete_fields', set())  # NEU
                                             
                                             if existing_metrics:
                                                 old_net_tvpi, old_net_irr = existing_metrics
                                                 
-                                                if new_net_tvpi is not None and old_net_tvpi != new_net_tvpi:
+                                                # NEU: Löschung prüfen für net_tvpi
+                                                if 'net_tvpi' in metadata_delete_fields and old_net_tvpi is not None:
+                                                    changes['funds'][fund_name].append({
+                                                        'field': 'net_tvpi',
+                                                        'old': f"{old_net_tvpi:.2f}x",
+                                                        'new': '🗑️ [LÖSCHEN]'
+                                                    })
+                                                elif new_net_tvpi is not None and old_net_tvpi != new_net_tvpi:
                                                     changes['funds'][fund_name].append({
                                                         'field': 'net_tvpi',
                                                         'old': f"{old_net_tvpi:.2f}x" if old_net_tvpi else "-",
                                                         'new': f"{new_net_tvpi:.2f}x"
                                                     })
-                                                if new_net_irr is not None and old_net_irr != new_net_irr:
+                                                
+                                                # NEU: Löschung prüfen für net_irr
+                                                if 'net_irr' in metadata_delete_fields and old_net_irr is not None:
+                                                    changes['funds'][fund_name].append({
+                                                        'field': 'net_irr',
+                                                        'old': f"{old_net_irr:.1f}%",
+                                                        'new': '🗑️ [LÖSCHEN]'
+                                                    })
+                                                elif new_net_irr is not None and old_net_irr != new_net_irr:
                                                     changes['funds'][fund_name].append({
                                                         'field': 'net_irr',
                                                         'old': f"{old_net_irr:.1f}%" if old_net_irr else "-",
                                                         'new': f"{new_net_irr:.1f}%"
                                                     })
+                                            
                                             else:
                                                 # Neue Metriken (noch kein Eintrag vorhanden)
                                                 if new_net_tvpi is not None:
@@ -2855,9 +2880,19 @@ def show_main_app():
                                                         realized_pct = (total_realized_ccy / total_value_ccy * 100) if total_value_ccy > 0 else 0
                                                         loss_ratio = (loss_invested / total_invested * 100) if total_invested > 0 else 0
                                                     
-                                                        import_net_tvpi = fund_info['metadata'].get('net_tvpi')
-                                                        import_net_irr = fund_info['metadata'].get('net_irr')
-
+                                                        metadata_delete_fields = fund_info.get('metadata_delete_fields', set())
+                                                        
+                                                        # Löschung prüfen
+                                                        if 'net_tvpi' in metadata_delete_fields:
+                                                            import_net_tvpi = None  # NULL setzen
+                                                        else:
+                                                            import_net_tvpi = fund_info['metadata'].get('net_tvpi')
+                                                        
+                                                        if 'net_irr' in metadata_delete_fields:
+                                                            import_net_irr = None  # NULL setzen
+                                                        else:
+                                                            import_net_irr = fund_info['metadata'].get('net_irr')
+                                                        
                                                         cursor.execute("""
                                                         INSERT INTO fund_metrics_history
                                                             (fund_id, reporting_date, total_tvpi, net_tvpi, net_irr, dpi, top5_value_concentration,
