@@ -2221,8 +2221,7 @@ def show_main_app():
                                                     funds_data[fund_name]['metadata'][field] = parse_date(val)
                                                 else:
                                                     funds_data[fund_name]['metadata'][field] = str(val).strip()
-                                
-              
+                                                  
                                     company_name = None
                                     if 'company_name' in fund_col_map:
                                         val = row.iloc[fund_col_map['company_name']]
@@ -2260,9 +2259,6 @@ def show_main_app():
                                         company_data['_delete_fields'] = company_delete_fields
                                         funds_data[fund_name]['companies'].append(company_data)
                             
-                                # DEBUG - temporär hinzufügen:
-                                st.write(f"🔍 Debug {fund_name}: net_tvpi={funds_data[fund_name]['metadata'].get('net_tvpi')}, net_irr={funds_data[fund_name]['metadata'].get('net_irr')}")
-
                                 # Änderungen ermitteln
                                 changes = {'gp': [], 'funds': {}, 'companies': {}}
                             
@@ -2330,6 +2326,46 @@ def show_main_app():
                                                             'new': new_val
                                                         })
                                     
+                                            cursor.execute("""
+                                                SELECT net_tvpi, net_irr FROM fund_metrics_history 
+                                                WHERE fund_id = (SELECT fund_id FROM funds WHERE fund_name = %s)
+                                                AND reporting_date = %s
+                                            """, (fund_name, reporting_date))
+                                            existing_metrics = cursor.fetchone()
+                                            
+                                            new_net_tvpi = fund_info['metadata'].get('net_tvpi')
+                                            new_net_irr = fund_info['metadata'].get('net_irr')
+                                            
+                                            if existing_metrics:
+                                                old_net_tvpi, old_net_irr = existing_metrics
+                                                
+                                                if new_net_tvpi is not None and old_net_tvpi != new_net_tvpi:
+                                                    changes['funds'][fund_name].append({
+                                                        'field': 'net_tvpi',
+                                                        'old': f"{old_net_tvpi:.2f}x" if old_net_tvpi else "-",
+                                                        'new': f"{new_net_tvpi:.2f}x"
+                                                    })
+                                                if new_net_irr is not None and old_net_irr != new_net_irr:
+                                                    changes['funds'][fund_name].append({
+                                                        'field': 'net_irr',
+                                                        'old': f"{old_net_irr:.1f}%" if old_net_irr else "-",
+                                                        'new': f"{new_net_irr:.1f}%"
+                                                    })
+                                            else:
+                                                # Neue Metriken (noch kein Eintrag vorhanden)
+                                                if new_net_tvpi is not None:
+                                                    changes['funds'][fund_name].append({
+                                                        'field': 'net_tvpi',
+                                                        'old': '-',
+                                                        'new': f"{new_net_tvpi:.2f}x"
+                                                    })
+                                                if new_net_irr is not None:
+                                                    changes['funds'][fund_name].append({
+                                                        'field': 'net_irr',
+                                                        'old': '-',
+                                                        'new': f"{new_net_irr:.1f}%"
+                                                    })
+                                        
                                         changes['companies'][fund_name] = {}
                                         for company in fund_info['companies']:
                                             company_name = company['company_name']
