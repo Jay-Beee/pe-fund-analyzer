@@ -2198,7 +2198,7 @@ def show_main_app():
                                             'companies': []
                                         }
                                 
-                                    for field in ['vintage_year', 'fund_size_m', 'currency', 'geography', 'reporting_date']:
+                                    for field in ['vintage_year', 'fund_size_m', 'currency', 'geography', 'reporting_date', 'net_tvpi', 'net_irr']:
                                         if field in fund_col_map:
                                             val = row.iloc[fund_col_map[field]]
                                             if pd.notna(val) and str(val).strip():
@@ -2212,11 +2212,16 @@ def show_main_app():
                                                         funds_data[fund_name]['metadata'][field] = float(val)
                                                     except:
                                                         pass
+                                                elif field in ['net_tvpi', 'net_irr']:
+                                                    try:
+                                                        funds_data[fund_name]['metadata'][field] = float(val)
+                                                    except:
+                                                        pass
                                                 elif field == 'reporting_date':
                                                     funds_data[fund_name]['metadata'][field] = parse_date(val)
                                                 else:
                                                     funds_data[fund_name]['metadata'][field] = str(val).strip()
-                                
+                
                                     company_name = None
                                     if 'company_name' in fund_col_map:
                                         val = row.iloc[fund_col_map['company_name']]
