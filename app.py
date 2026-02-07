@@ -1292,7 +1292,14 @@ def show_main_app():
             strategies = sorted(all_funds_df['strategy'].dropna().unique())
             selected_strategies = st.sidebar.multiselect("Strategy", options=strategies, default=[], key=f"strategy_{fv}") if strategies else []
             
-            sectors = sorted(all_funds_df['sector'].dropna().unique())
+            # Sektoren aufsplitten (Komma-getrennte Werte)
+            all_sectors = set()
+            for sector_str in all_funds_df['sector'].dropna().unique():
+                for sector in str(sector_str).split(','):
+                    sector_clean = sector.strip()
+                    if sector_clean:
+                        all_sectors.add(sector_clean)
+            sectors = sorted(all_sectors)
             selected_sectors = st.sidebar.multiselect("Sektor", options=sectors, default=[], key=f"sector_{fv}") if sectors else []
             
             geographies = sorted(all_funds_df['geography'].dropna().unique())
@@ -1332,7 +1339,13 @@ def show_main_app():
                 if selected_strategies:
                     filtered_df = filtered_df[filtered_df['strategy'].isin(selected_strategies)]
                 if selected_sectors:
-                    filtered_df = filtered_df[filtered_df['sector'].isin(selected_sectors)]
+                    # Prüfen ob mindestens ein ausgewählter Sektor im Komma-getrennten String vorkommt
+                    def sector_matches(sector_str):
+                        if pd.isna(sector_str):
+                            return False
+                        fund_sectors = [s.strip() for s in str(sector_str).split(',')]
+                        return any(s in fund_sectors for s in selected_sectors)
+                    filtered_df = filtered_df[filtered_df['sector'].apply(sector_matches)]
                 if selected_geographies:
                     filtered_df = filtered_df[filtered_df['geography'].isin(selected_geographies)]
                 if selected_vintages:
